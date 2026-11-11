@@ -142,3 +142,9 @@ Conversation memory between visits, a choice of speech recognizers, and dressing
 
 [MIT](LICENSE). Chimera is MIT, by Jameson Hodge. The CMU Pronouncing Dictionary is copied from
 Chimera at build time under its own license (`public/data/CMUDICT-LICENSE.txt`).
+
+The trained pitch model in `public/models/` (`prosody.json`, `prosody.bin`) was trained on
+[DailyTalk](https://github.com/keonlee9420/DailyTalk) (Lee, Park and Kim, "DailyTalk: Spoken
+Dialogue Dataset for Conversational Text-to-Speech", ICASSP 2023), which is licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Those two files are shared under
+the same license. They hold no audio or text from the dataset beyond a list of its commonest words.
