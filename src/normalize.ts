@@ -31,6 +31,8 @@ function clock(_: string, h: string, m: string): string {
   return `${cardinal(Number(h))} ${mm === 0 ? "o'clock" : mm < 10 ? "oh " + cardinal(mm) : cardinal(mm)}`;
 }
 
+const meridiem = (x: string) => `${x.toLowerCase() === "a" ? "ay" : "pee"} em`;
+
 export function toSpeakable(text: string): string {
   let s = text;
   // markdown and markup
@@ -44,8 +46,10 @@ export function toSpeakable(text: string): string {
   for (const [re, to] of ABBREVIATIONS) s = s.replace(re, to);
   // money, times, percentages, ordinals, decimals, thousands separators
   s = s.replace(/\$\s?(\d[\d,]*)(?:\.(\d{1,2}))?/g, money);
+  // "am" is a word: it is a time of day only straight after a number, or dotted ("a.m.")
+  s = s.replace(/(\d)\s?([ap])\.?m\b\.?/gi, (_, d: string, x: string) => `${d} ${meridiem(x)}`);
+  s = s.replace(/\b([ap])\.m\.?/gi, (_, x: string) => meridiem(x));
   s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, clock);
-  s = s.replace(/\b([ap])\.?m\b\.?/gi, (_, x: string) => `${x.toLowerCase() === "a" ? "ay" : "pee"} em`);
   s = s.replace(/(\d)\s?%/g, "$1 percent");
   s = s.replace(/\b(\d+)(st|nd|rd|th)\b/gi, (_, n: string) => ordinal(Number(n)));
   s = s.replace(/\b(\d[\d,]*)\.(\d+)\b/g, (_, a: string, b: string) => `${a.replace(/,/g, "")} point ${digits(b)}`);
