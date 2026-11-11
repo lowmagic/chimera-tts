@@ -2,7 +2,7 @@
 // The model endpoint is mocked (a streamed reply in small pieces) and the browser's speech
 // recognizer is replaced with a fake that "hears" one sentence, so no network or microphone is used.
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -289,11 +289,13 @@ try {
   await page.click("#open-settings");
   await page.waitForFunction(() => document.querySelectorAll("#models option").length === 2);
   check(true, "settings lists the endpoint's models");
-  check(await page.locator("#trained-row").isHidden(), "no trained pitch model on the site, so no switch for one");
+  const shipped = existsSync(join(import.meta.dirname, "..", "dist", "models", "prosody.json"));
+  check((await page.locator("#trained-row").isHidden()) === !shipped, shipped ? "the site's trained pitch model is offered in settings" : "no trained pitch model on the site, so no switch for one");
   check((await page.locator("#models option").first().getAttribute("value")) === "test/model-a", "suggested models the endpoint doesn't have are not offered");
   // another model with ZDR off: the next request says so, to OpenRouter and to the model
   await page.fill('input[name="model"]', "test/model-b");
   await page.uncheck('input[name="zdr"]');
+  await page.selectOption('select[name="reasoning"]', "low");
   await page.uncheck('input[name="showHead"]');
   check(await page.evaluate(() => document.getElementById("stage").hidden && !document.querySelector("#stage canvas")), "the head can be turned off");
 
@@ -303,6 +305,7 @@ try {
   await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 15000 });
   const third = requests[2]?.body ?? {};
   check(third.model === "test/model-b" && third.provider?.zdr === undefined && third.provider?.sort === "latency", "a changed model and ZDR switched off go into the next request");
+  check(third.reasoning?.effort === "low" && third.max_tokens === 1900, "and so does a reasoning level, with room to think");
   check(/running as the model "test\/model-b"/.test(third.messages?.[0]?.content ?? "") && /different model, "nousresearch\/hermes-4-70b"/.test(third.messages[0].content), "the model is told it has changed");
   check((await page.locator(".msg.note").last().textContent()) === "Now using test/model-b via openrouter.ai", "and the log announces the change");
   await page.click("#mic");

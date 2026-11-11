@@ -11,6 +11,10 @@ export interface ChatOptions {
   messages: ChatMessage[];
   /** OpenRouter only: route to providers that keep no data (Zero Data Retention) */
   zdr?: boolean;
+  /** how much the model thinks before it answers; "off" (the default) starts speaking soonest */
+  reasoning?: Reasoning;
+  /** talking to a Hermes Agent, which takes some options in its own way */
+  hermes?: boolean;
   /**
    * Hermes Agent only: the conversation's id, sent as X-Hermes-Session-Id so the agent keeps one
    * session for the whole chat instead of working out which one each request belongs to.
@@ -21,8 +25,12 @@ export interface ChatOptions {
   signal?: AbortSignal;
 }
 
+export type Reasoning = "off" | "low" | "medium" | "high";
+
 /** replies are spoken: a runaway one is cut here (a few sentences is ~100 tokens) */
 const MAX_TOKENS = 400;
+/** thinking is counted against the same limit by most providers, so it gets room of its own */
+const THINKING_TOKENS: Record<Reasoning, number> = { off: 0, low: 1500, medium: 4000, high: 10000 };
 
 export const isOpenRouter = (baseUrl: string): boolean => {
   try {
@@ -34,15 +42,21 @@ export const isOpenRouter = (baseUrl: string): boolean => {
 
 /**
  * The request body. OpenRouter gets its own routing fields: the fastest provider first (the wait
- * before the voice starts is what a conversation feels), no hidden reasoning pass before the
- * reply, and with `zdr` only providers that retain nothing. Other endpoints get the standard
- * fields only, since some reject ones they don't know.
+ * before the voice starts is what a conversation feels), and with `zdr` only providers that
+ * retain nothing. Reasoning is asked for in each backend's own way: OpenRouter's `reasoning`,
+ * Hermes Agent's `model_options`, and OpenAI's `reasoning_effort` elsewhere. With reasoning off,
+ * OpenRouter is told so (some models think by default) and other endpoints are sent nothing,
+ * since some reject fields they don't know.
  */
-export function requestBody(o: Pick<ChatOptions, "baseUrl" | "model" | "messages" | "zdr">): Record<string, unknown> {
-  const body: Record<string, unknown> = { model: o.model, messages: o.messages, stream: true, max_tokens: MAX_TOKENS };
+export function requestBody(o: Pick<ChatOptions, "baseUrl" | "model" | "messages" | "zdr" | "reasoning" | "hermes">): Record<string, unknown> {
+  const reasoning = o.reasoning ?? "off";
+  const body: Record<string, unknown> = { model: o.model, messages: o.messages, stream: true, max_tokens: MAX_TOKENS + THINKING_TOKENS[reasoning] };
   if (isOpenRouter(o.baseUrl)) {
-    body.reasoning = { enabled: false };
+    body.reasoning = reasoning === "off" ? { enabled: false } : { effort: reasoning };
     body.provider = { sort: "latency", ...(o.zdr ? { zdr: true, data_collection: "deny" } : {}) };
+  } else if (reasoning !== "off") {
+    if (o.hermes) body.model_options = { reasoning_effort: reasoning };
+    else body.reasoning_effort = reasoning;
   }
   return body;
 }

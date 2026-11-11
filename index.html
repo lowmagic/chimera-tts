@@ -59,6 +59,14 @@
           <input name="model" type="text" list="models" autocomplete="off" />
           <datalist id="models"></datalist>
         </label>
+        <label>Reasoning <small>thinking first is smarter, and slower to start speaking</small>
+          <select name="reasoning">
+            <option value="off">Off (fastest)</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
         <label class="row" id="zdr-row"><input name="zdr" type="checkbox" /> Zero data retention <small>OpenRouter: only providers that keep nothing</small></label>
         <label>Voice
           <select name="body">

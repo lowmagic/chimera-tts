@@ -1,4 +1,5 @@
 /** Settings kept in this browser's localStorage (the API key never leaves it except to the endpoint). */
+import type { Reasoning } from "./llm.ts";
 import type { BodyName } from "./voice.ts";
 
 /** what answers the chat: OpenRouter, a Hermes Agent's API server, or any other OpenAI-compatible endpoint */
@@ -26,6 +27,8 @@ export interface Settings {
   model: string;
   /** OpenRouter: only providers with Zero Data Retention */
   zdr: boolean;
+  /** how much the model thinks before answering */
+  reasoning: Reasoning;
   systemPrompt: string;
   body: BodyName;
   rate: number;
@@ -55,6 +58,7 @@ export const DEFAULTS: Settings = {
   baseUrl: "https://openrouter.ai/api/v1",
   model: "nousresearch/hermes-4-70b",
   zdr: true,
+  reasoning: "off",
   systemPrompt: DEFAULT_PROMPT,
   body: "male",
   rate: 1,
