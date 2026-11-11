@@ -191,7 +191,7 @@ async function send(text: string, spoken: boolean): Promise<void> {
     const onTool = (name: string) => {
       if (request === ctl && state === "thinking") statusEl.textContent = `using ${name}…`;
     };
-    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, hermesSession: hermes ? hermesSession : undefined, onTool, signal: ctl.signal })) {
+    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, reasoning: settings.reasoning, hermes, hermesSession: hermes ? hermesSession : undefined, onTool, signal: ctl.signal })) {
       lastBackend = { model, baseUrl }; // it answered: this is what the conversation is on now
       reply += delta;
       renderReply(el, reply);
@@ -257,7 +257,7 @@ function showBackend(): void {
 }
 
 function fillForm(): void {
-  for (const k of ["backend", "apiKey", "baseUrl", "model", "systemPrompt", "body"] as const) field(k).value = settings[k];
+  for (const k of ["backend", "apiKey", "baseUrl", "model", "reasoning", "systemPrompt", "body"] as const) field(k).value = settings[k];
   showBackend();
   for (const k of ["rate", "pitch"] as const) field(k).value = String(settings[k]);
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
@@ -281,6 +281,7 @@ function readForm(): void {
     apiKey: field("apiKey").value.trim(),
     baseUrl: field("baseUrl").value.trim() || settings.baseUrl,
     model: field("model").value.trim() || settings.model,
+    reasoning: field<HTMLSelectElement>("reasoning").value as Settings["reasoning"],
     systemPrompt: field("systemPrompt").value,
     body: field<HTMLSelectElement>("body").value as Settings["body"],
     rate: Number(field("rate").value),

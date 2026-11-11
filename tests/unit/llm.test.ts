@@ -118,3 +118,20 @@ test("settings from before the choice existed are placed by their endpoint", () 
   expect(guessBackend("http://127.0.0.1:8642/v1")).toBe("hermes");
   expect(guessBackend("http://localhost:11434/v1")).toBe("custom");
 });
+
+test("reasoning is asked for in each backend's own way, with room to think", () => {
+  const or = (reasoning?: "off" | "low" | "high") => requestBody({ baseUrl: "https://openrouter.ai/api/v1", model: "m", messages, reasoning });
+  expect(or().reasoning).toEqual({ enabled: false });
+  expect(or("off").max_tokens).toBe(400);
+  expect(or("low").reasoning).toEqual({ effort: "low" });
+  expect(or("low").max_tokens).toBe(1900);
+  expect(or("high").max_tokens).toBe(10400);
+  const hermes = requestBody({ baseUrl: "http://127.0.0.1:8642/v1", model: "hermes-agent", messages, reasoning: "medium", hermes: true });
+  expect(hermes.model_options).toEqual({ reasoning_effort: "medium" });
+  expect("reasoning" in hermes || "reasoning_effort" in hermes).toBe(false);
+  const other = requestBody({ baseUrl: "http://127.0.0.1:11434/v1", model: "m", messages, reasoning: "high" });
+  expect(other.reasoning_effort).toBe("high");
+  // off: nothing an endpoint might not know
+  expect(requestBody({ baseUrl: "http://127.0.0.1:11434/v1", model: "m", messages, reasoning: "off" })).toEqual({ model: "m", messages, stream: true, max_tokens: 400 });
+  expect(requestBody({ baseUrl: "http://127.0.0.1:8642/v1", model: "hermes-agent", messages, reasoning: "off", hermes: true })).toEqual({ model: "hermes-agent", messages, stream: true, max_tokens: 400 });
+});
