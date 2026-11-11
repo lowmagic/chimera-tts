@@ -5,13 +5,20 @@
 The corpus is a folder in LJSpeech's layout: `metadata.csv` ("id|text|normalised text" per line)
 and `wavs/<id>.wav`. Any single-speaker corpus laid out that way works.
 
-Syllable times come from wav2vec 2.0 forced alignment (downloaded from Hugging Face on first use,
-about 360 MB), or from `--alignments file.json` ({id: [[start, end] per syllable]}) if you have
-them from elsewhere, which is how the test corpus rendered by Chimera supplies them.
+Syllable times come from, in order of preference:
+- `--textgrids DIR`: Montreal Forced Aligner TextGrids (`<id>.TextGrid` anywhere under DIR, with
+  an ARPAbet "phones" tier). Real phoneme alignments: the best labels you can give it.
+- `--alignments file.json` ({id: [[start, end] per syllable]}), which is how the practice corpus
+  rendered by Chimera supplies them.
+- otherwise wav2vec 2.0 forced alignment (downloaded from Hugging Face on first use, about
+  360 MB), which times letters and guesses the vowels from them: rougher.
+
+A corpus with several speakers has a `speakers.json` ({id: speaker}) beside metadata.csv. Pitch
+is learned relative to each speaker's own usual pitch, so the speaker must be known.
 
 One line of JSON is written per utterance kept:
   {"id", "phrases": [{"words": [[text, [stress per syllable]]...], "end"}], "y": [[early, late]
-   per syllable, semitones above 1 Hz], "ok": [voiced enough to trust, per syllable]}
+   per syllable, semitones above 1 Hz], "ok": [voiced enough to trust, per syllable], "speaker"}
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .align import textgrid_nuclei
 from .f0 import pitch_track, syllable_targets
 from .text import Phrase, load_cmudict, syllable_phones, to_utterance
 
@@ -54,6 +62,8 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ljspeech", type=Path, required=True, help="corpus folder (metadata.csv and wavs/)")
     ap.add_argument("--out", type=Path, default=Path("data/ljspeech.jsonl"))
+    ap.add_argument("--textgrids", type=Path, help="folder of MFA TextGrids to take syllable times from")
+    ap.add_argument("--tier", default="phones", help="the TextGrids' phone tier")
     ap.add_argument("--alignments", type=Path, help="syllable times to use instead of aligning")
     ap.add_argument("--limit", type=int, help="only the first N utterances (for a quick try)")
     ap.add_argument("--device", default=None, help="cuda or cpu for the aligner (default: cuda if there is one)")
@@ -68,8 +78,13 @@ def main(argv: list[str] | None = None) -> None:
     cmudict = load_cmudict()
     rows = read_metadata(args.ljspeech)[: args.limit]
     given = json.loads(args.alignments.read_text()) if args.alignments else None
+    speakers_file = args.ljspeech / "speakers.json"
+    speakers = json.loads(speakers_file.read_text()) if speakers_file.exists() else {}
+    grids = {p.stem: p for p in args.textgrids.rglob("*.TextGrid")} if args.textgrids else None
+    if grids is not None:
+        print(f"{len(grids)} TextGrids under {args.textgrids}")
     aligner = None
-    if given is None:
+    if given is None and grids is None:
         import torch
 
         from .align import Wav2Vec2Aligner, nuclei
@@ -96,7 +111,19 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             if wave.ndim > 1:
                 wave = wave.mean(axis=1)
-            if given is not None:
+            if grids is not None:
+                if uid not in grids:
+                    dropped["no TextGrid"] += 1
+                    continue
+                try:
+                    spans = textgrid_nuclei(grids[uid].read_text(encoding="utf-8"), args.tier)
+                except ValueError:
+                    dropped["TextGrid has no phone tier"] += 1
+                    continue
+                if len(spans) != n:
+                    dropped["syllable count differs from the TextGrid"] += 1
+                    continue
+            elif given is not None:
                 spans = [tuple(s) for s in given.get(uid, [])]
                 if len(spans) != n:
                     dropped["syllable count differs from the alignment"] += 1
@@ -114,7 +141,7 @@ def main(argv: list[str] | None = None) -> None:
             if sum(ok) < args.min_voiced * n:
                 dropped["too little of it voiced"] += 1
                 continue
-            out.write(json.dumps({"id": uid, "phrases": utterance_json(utt), "y": [[round(v, 3) for v in t] for t in y], "ok": ok}) + "\n")
+            out.write(json.dumps({"id": uid, "phrases": utterance_json(utt), "y": [[round(v, 3) for v in t] for t in y], "ok": ok, "speaker": str(speakers.get(uid, ""))}) + "\n")
             kept += 1
             syllables += n
 

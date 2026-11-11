@@ -124,3 +124,32 @@ def nuclei(word: str, phones: list[str], letters: list[tuple[float, float]]) -> 
             out.append((t0 + (t1 - t0) * at / total, t0 + (t1 - t0) * (at + ln) / total))
         at += ln
     return out
+
+
+# ---- alignments made elsewhere: Montreal Forced Aligner TextGrids
+
+_INTERVAL = re.compile(r'xmin\s*=\s*([\d.eE+-]+)\s*xmax\s*=\s*([\d.eE+-]+)\s*text\s*=\s*"((?:[^"]|"")*)"')
+_SHORT = re.compile(r'^([\d.eE+-]+)\s*\n([\d.eE+-]+)\s*\n"((?:[^"]|"")*)"\s*$', re.M)
+
+
+def textgrid_tier(text: str, name: str = "phones") -> list[tuple[float, float, str]]:
+    """The (start, end, label) intervals of one tier of a Praat TextGrid, long or short format."""
+    long = re.split(r"\n\s*item\s*\[\d+\]\s*:", text)
+    if len(long) > 1:
+        for block in long[1:]:
+            m = re.search(r'name\s*=\s*"([^"]*)"', block)
+            if m and m.group(1) == name:
+                return [(float(a), float(b), t) for a, b, t in _INTERVAL.findall(block)]
+        raise ValueError(f"no tier named {name!r}")
+    # short format: "IntervalTier", the name, the tier's span and size, then start/end/label triples
+    parts = re.split(r'"IntervalTier"\s*\n', text)
+    for block in parts[1:]:
+        if block.startswith(f'"{name}"'):
+            return [(float(a), float(b), t) for a, b, t in _SHORT.findall(block)]
+    raise ValueError(f"no tier named {name!r}")
+
+
+def textgrid_nuclei(text: str, tier: str = "phones") -> list[tuple[float, float]]:
+    """Each vowel's (start, end) from a TextGrid's phone tier (ARPAbet labels, as MFA's
+    english_us_arpa models and the LibriSpeech lexicon give: "AH0", "IY1")."""
+    return [(a, b) for a, b, label in textgrid_tier(text, tier) if is_vowel(label.strip().upper())]

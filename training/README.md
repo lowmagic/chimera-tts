@@ -79,6 +79,42 @@ python -m prosody.train --data data/synth.jsonl --out runs/synth.pt
    and push. The app finds them and Settings gains a "Trained pitch model" switch, on by default.
    Delete the two files to go back to the rules.
 
+## Other recordings: conversation instead of narration
+
+LJSpeech is someone reading books aloud, and the model will learn that way of speaking. Use it
+once to see the tools work on real audio, then train on speech closer to a conversation.
+
+**DailyTalk** ([repository](https://github.com/keonlee9420/DailyTalk), 20 hours, two people acting
+everyday dialogues, CC BY-SA 4.0) is the first one to try. Download the dataset and the authors'
+TextGrid alignments from the links in its README, then:
+
+```sh
+python -m prosody.dailytalk --src /data/DailyTalk --out /data/dailytalk-lj
+python -m prosody.prep --ljspeech /data/dailytalk-lj --textgrids /data/DailyTalk-TextGrid --out data/dailytalk.jsonl
+python -m prosody.train --data data/dailytalk.jsonl --out runs/dailytalk.pt
+```
+
+The converter has not been run against the real download. If it finds nothing, look at how the
+recordings are named and tell it apart from `<utterance>_<speaker>_d<dialogue>.wav`.
+
+**Any other corpus** needs the LJSpeech layout: `metadata.csv` (`id|text|text`), `wavs/<id>.wav`,
+and, with more than one speaker, `speakers.json` (`{id: speaker}`). Things to know:
+
+- **Speakers.** Pitch is learned relative to each speaker's own median, so a high voice and a low
+  one teach the same melody. That only works if `speakers.json` says who is who.
+- **Alignments.** `--textgrids` takes Montreal Forced Aligner output (`<id>.TextGrid` with an
+  ARPAbet `phones` tier, which the `english_us_arpa` models give). These are real phoneme times
+  and much better than the built-in letter-based guess. Better alignments help more than more data.
+- **Mixing.** `--data` takes several sets: `--data data/dailytalk.jsonl data/ljspeech.jsonl`.
+- **Spontaneous speech** (real conversations with machine transcripts) is a harder fit: the
+  transcripts have errors, and people say "um" and restart, which the chat model never writes.
+  Clips whose words or syllable counts don't match are dropped, so expect to lose many.
+- **Licences.** A model trained on a noncommercial corpus shouldn't be published on a public
+  site. LJSpeech is public domain; DailyTalk is CC BY-SA.
+
+Judge by ear, on things the assistant would say: `bun tools/render.ts out --model …` with a few
+replies, each model in turn. A lower error number does not mean it sounds more human.
+
 ## If it sounds wrong
 
 - **Flat.** A model like this predicts the average way of saying something, which is flatter than
@@ -99,6 +135,7 @@ python -m prosody.train --data data/synth.jsonl --out runs/synth.pt
 | `prosody/align.py` | where each syllable is in a recording |
 | `prosody/f0.py` | a recording's pitch, and each syllable's two targets |
 | `prosody/prep.py` | corpus → `data/*.jsonl` |
+| `prosody/dailytalk.py` | DailyTalk → the layout `prep` reads |
 | `prosody/model.py`, `train.py` | the network and its training |
 | `prosody/export.py` | checkpoint → `public/models/prosody.{json,bin}` |
 | `prosody/fixtures.py` | regenerates `tests/fixtures/`, which hold the Python and TypeScript halves to the same answers; run it and commit if you change the features or the layers |
