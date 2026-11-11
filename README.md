@@ -24,6 +24,13 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   Settings and stays in your browser's localStorage; the page sends it only to the endpoint.
 - **Ears**: the browser's built-in speech recognition (Chrome, Edge, Safari). No key needed.
   Firefox has none, so there you type.
+- **Pitch**: with "Natural pitch" on, Chimera's own pitch gestures (the same bump on every
+  stressed vowel, a full fall at every comma) are replaced with a contour shaped like spoken
+  English: accents on content words only, a small rise before a comma, a climb at a yes/no
+  question, a fall at a full stop. The model is asked to start a reply with a mood (`[excited]`)
+  and to put asterisks round a word it would stress; both shape the pitch and neither is read
+  aloud. It is rules (`src/prosody.ts`), not a trained model, and it only touches pitch: timing
+  and articulation are Chimera's.
 - **Head**: Chimera's own 3D renderer (three.js), driven by the engine's live state. Drag to turn
   it. It can be turned off in Settings on a slow phone.
 - No server. The built site is static files, installable to a phone's home screen.
@@ -44,12 +51,18 @@ Open Settings, paste an API key, pick a model, then tap **Talk**.
 The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 
 ```sh
-bun run test         # unit tests (text normalizing, sentence splitting, the talk-over detector)
+bun run test         # unit tests (text, sentences, pitch contours, the talk-over detector)
 bun run build        # typecheck and build to dist/
 bun run e2e          # after a build: headless Chromium, mocked model and recognizer
 ```
 
 `bun run e2e` needs Playwright with Chromium installed; it is not a dependency of this repo.
+
+To compare the two pitch modes by ear without the page, render a reply both ways to WAV files:
+
+```sh
+bun tools/render.ts out female "[happy] Hello! This is *really* how I sound. Do you like it?"
+```
 
 ## Using it
 

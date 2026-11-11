@@ -2,7 +2,7 @@
  * Model text → text the synth can say. Chimera's front end reads plain words and whole numbers;
  * everything else (markdown, symbols, money, times, decimals) is turned into words here.
  */
-import { cardinal, digits, ordinal } from "./numbers.ts";
+import { cardinal, digits, ordinal, spoken } from "./numbers.ts";
 
 const ABBREVIATIONS: [RegExp, string][] = [
   [/\be\.g\.,?/gi, "for example,"],
@@ -54,6 +54,9 @@ export function toSpeakable(text: string): string {
   s = s.replace(/\b(\d+)(st|nd|rd|th)\b/gi, (_, n: string) => ordinal(Number(n)));
   s = s.replace(/\b(\d[\d,]*)\.(\d+)\b/g, (_, a: string, b: string) => `${a.replace(/,/g, "")} point ${digits(b)}`);
   s = s.replace(/\b(\d{1,3}(?:,\d{3})+)\b/g, (m) => m.replace(/,/g, ""));
+  // every number left becomes words here, not in the engine, so the words can be counted (the
+  // emphasis marks are by word) and a year is said as one; a very long one is read digit by digit
+  s = s.replace(/\d+/g, (m) => ` ${m.length > 15 ? digits(m) : spoken(Number(m))} `);
   // symbols with a spoken name
   s = s.replace(/&/g, " and ").replace(/\+/g, " plus ").replace(/=/g, " equals ").replace(/@/g, " at ").replace(/°/g, " degrees ");
   s = s.replace(/(\w)\/(\w)/g, "$1 slash $2");
