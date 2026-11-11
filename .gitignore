@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.env.*
+*.local
+public/data/cmudict.txt.gz
+test-results
+.DS_Store
