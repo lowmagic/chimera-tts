@@ -1,6 +1,10 @@
 """Trains the pitch model on a prepared set.
 
     python -m prosody.train --data data/ljspeech.jsonl --out runs/ljspeech.pt
+    python -m prosody.train --data data/dailytalk.jsonl data/ljspeech.jsonl --out runs/mixed.pt
+
+Several sets can be given and are mixed. Each speaker's pitch is measured from their own median,
+so voices of different heights teach the same melody.
 
 Takes a few minutes on a GPU (the model is tiny; LJSpeech is about 300,000 syllables). Prints,
 per epoch, the error on held-out utterances in semitones next to the error of always guessing
@@ -28,6 +32,8 @@ def load(path: Path) -> list[dict]:
     with path.open(encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
+            # a speaker is a speaker of one set: two sets may both have a "1"
+            r["speaker"] = f"{path.stem}:{r.get('speaker', '')}"
             r["utt"] = [Phrase([Word(t, st) for t, st in p["words"]], p["end"]) for p in r["phrases"]]
             rows.append(r)
     return rows
@@ -39,11 +45,19 @@ def build_vocab(rows: list[dict], size: int, min_count: int) -> list[str]:
     return [""] + [w for w, c in counts.most_common(size - 1) if c >= min_count]
 
 
-def tensors(rows: list[dict], vocab: dict[str, int], ref: float):
+def speaker_medians(rows: list[dict]) -> dict[str, float]:
+    """Each speaker's usual pitch: the median of all their trusted readings (semitones above 1 Hz)."""
+    by: dict[str, list[float]] = {}
+    for r in rows:
+        by.setdefault(r["speaker"], []).extend(v for t, ok in zip(r["y"], r["ok"]) if ok for v in t)
+    return {s: float(np.median(v)) for s, v in by.items() if v}
+
+
+def tensors(rows: list[dict], vocab: dict[str, int], refs: dict[str, float]):
     items = []
     for r in rows:
         cat, num = encode(featurize(r["utt"]), vocab)
-        y = torch.tensor(r["y"], dtype=torch.float32) - ref
+        y = torch.tensor(r["y"], dtype=torch.float32) - refs[r["speaker"]]
         ok = torch.tensor(r["ok"], dtype=torch.bool)
         if len(cat) != len(y):
             raise SystemExit(f"{r['id']}: {len(cat)} syllables but {len(y)} pitch targets; prepare the data again")
@@ -81,7 +95,7 @@ def evaluate(model: PitchModel, items, device: str) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", type=Path, required=True)
+    ap.add_argument("--data", type=Path, required=True, nargs="+", help="one or more prepared sets")
     ap.add_argument("--out", type=Path, default=Path("runs/pitch.pt"))
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=64)
@@ -99,16 +113,19 @@ def main(argv: list[str] | None = None) -> None:
     torch.manual_seed(args.seed)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    rows = load(args.data)
+    rows = [r for path in args.data for r in load(path)]
+    refs = speaker_medians(rows)
+    rows = [r for r in rows if r["speaker"] in refs]
     random.shuffle(rows)
     n_val = max(1, int(len(rows) * args.holdout))
     val_rows, train_rows = rows[:n_val], rows[n_val:]
     words = build_vocab(train_rows, args.vocab, args.min_count)
     vocab = {w: i for i, w in enumerate(words)}
-    # pitch is learned relative to the speaker's usual pitch: the median of every trusted reading
-    ref = float(np.median([v for r in train_rows for t, ok in zip(r["y"], r["ok"]) if ok for v in t]))
-    train, val = tensors(train_rows, vocab, ref), tensors(val_rows, vocab, ref)
-    print(f"{len(train)} utterances to train on, {len(val)} held out, {len(words)} words, speaker's median pitch {2 ** (ref / 12):.0f} Hz, on {device}")
+    # pitch is learned relative to each speaker's usual pitch
+    ref = float(np.median(list(refs.values())))
+    train, val = tensors(train_rows, vocab, refs), tensors(val_rows, vocab, refs)
+    voices = ", ".join(f"{s.rstrip(':') or 'the speaker'} {2 ** (v / 12):.0f} Hz" for s, v in sorted(refs.items())[:8]) + (" …" if len(refs) > 8 else "")
+    print(f"{len(train)} utterances to train on, {len(val)} held out, {len(words)} words, {len(refs)} speaker(s) with median pitch {voices}, on {device}")
 
     model = PitchModel(len(words), args.hidden).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
