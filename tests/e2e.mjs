@@ -247,7 +247,7 @@ try {
   await page.click("#open-settings");
   await page.waitForFunction(() => document.querySelectorAll("#models option").length === 2);
   check(true, "settings lists the endpoint's models");
-  check(await page.evaluate(() => document.getElementById("trained-row").hidden), "no trained pitch model on the site, so no switch for one");
+  check(await page.locator("#trained-row").isHidden(), "no trained pitch model on the site, so no switch for one");
   check((await page.locator("#models option").first().getAttribute("value")) === "test/model-a", "suggested models the endpoint doesn't have are not offered");
   // another model with ZDR off: the next request says so, to OpenRouter and to the model
   await page.fill('input[name="model"]', "test/model-b");
