@@ -5,6 +5,8 @@ export interface Settings {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** OpenRouter: only providers with Zero Data Retention */
+  zdr: boolean;
   systemPrompt: string;
   body: BodyName;
   rate: number;
@@ -28,7 +30,8 @@ export const DEFAULT_PROMPT =
 export const DEFAULTS: Settings = {
   apiKey: "",
   baseUrl: "https://openrouter.ai/api/v1",
-  model: "anthropic/claude-haiku-4.5",
+  model: "nousresearch/hermes-4-70b",
+  zdr: true,
   systemPrompt: DEFAULT_PROMPT,
   body: "male",
   rate: 1,
@@ -38,6 +41,9 @@ export const DEFAULTS: Settings = {
   bargeIn: true,
   showHead: true,
 };
+
+/** models worth trying for spoken chat (fast, cheap, conversational), offered first in Settings */
+export const SUGGESTED_MODELS = ["nousresearch/hermes-4-70b", "cognitivecomputations/dolphin-mistral-24b-venice-edition", "qwen/qwen3.7-flash", "qwen/qwen3.6-35b-a3b"];
 
 const KEY = "chimera-voice-chat:settings";
 

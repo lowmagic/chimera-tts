@@ -22,6 +22,12 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
 - **Model**: any OpenAI-compatible streaming endpoint. The default is
   [OpenRouter](https://openrouter.ai), so the model is one setting. The API key is typed into
   Settings and stays in your browser's localStorage; the page sends it only to the endpoint.
+  On OpenRouter the request asks for the fastest provider and no reasoning pass, and with
+  "Zero data retention" on (the default) only for providers that keep nothing. OpenRouter's
+  self-serve accounts still allow "safety retention" providers under that flag: to rule those out
+  too, choose "ZDR only" in your OpenRouter privacy settings. If a model has no such provider the
+  request fails and says so. The model is told which model and endpoint it is running on, so you
+  can ask it, and the log notes it whenever that changes.
 - **Ears**: the browser's built-in speech recognition (Chrome, Edge, Safari). No key needed.
   Firefox has none, so there you type.
 - **Pitch**: with "Natural pitch" on, Chimera's own pitch gestures (the same bump on every
