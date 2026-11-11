@@ -11,6 +11,10 @@ export interface Settings {
   pitch: number;
   /** listen again by itself once the reply has been spoken */
   handsFree: boolean;
+  /** stop the voice when the user starts talking over it */
+  bargeIn: boolean;
+  /** draw the 3D head (costs a phone some CPU the voice may want) */
+  showHead: boolean;
 }
 
 export const DEFAULT_PROMPT =
@@ -28,6 +32,8 @@ export const DEFAULTS: Settings = {
   rate: 1,
   pitch: 1,
   handsFree: true,
+  bargeIn: true,
+  showHead: true,
 };
 
 const KEY = "chimera-voice-chat:settings";

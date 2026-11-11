@@ -5,6 +5,8 @@ import { toSpeakable } from "./normalize.ts";
 import { SentenceStream } from "./sentences.ts";
 import { DEFAULT_PROMPT, loadSettings, saveSettings, type Settings } from "./settings.ts";
 import { Voice, type Caption } from "./voice.ts";
+import { Head } from "./head.ts";
+import { BargeIn } from "./bargein.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const log = $("log"), statusEl = $("status"), captionEl = $("caption"), hint = $("hint");
@@ -20,12 +22,31 @@ let state: State = "loading";
 let settings: Settings = loadSettings();
 const history: ChatMessage[] = [];
 const voice = new Voice();
+const stage = $("stage");
+const head = new Head(stage);
 /** the reply being fetched (aborted when the user talks over it) */
 let request: AbortController | null = null;
 let interimEl: HTMLElement | null = null;
 
+/** keeps a phone's screen on through a conversation (the browser drops it when the page is hidden) */
+let wakeLock: { release(): Promise<void> } | null = null;
+function keepAwake(on: boolean): void {
+  const nav = navigator as Navigator & { wakeLock?: { request(type: "screen"): Promise<{ release(): Promise<void> }> } };
+  if (on && !wakeLock && document.visibilityState === "visible") {
+    nav.wakeLock?.request("screen").then((l) => (wakeLock = l), () => {});
+  } else if (!on && wakeLock) {
+    void wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") wakeLock = null; // released by the browser
+  else keepAwake(state !== "idle" && state !== "loading");
+});
+
 function setState(s: State): void {
   state = s;
+  keepAwake(s !== "idle" && s !== "loading");
   mic.dataset.state = s;
   mic.disabled = s === "loading";
   micLabel.textContent = { loading: "…", idle: "Talk", listening: "Send", thinking: "Stop", speaking: "Stop" }[s];
@@ -56,13 +77,19 @@ function showCaption(c: Caption | null): void {
 
 voice.onCaption = showCaption;
 voice.onSpeaking = (speaking) => {
-  if (speaking) return void (state === "thinking" || state === "idle" ? setState("speaking") : 0);
+  if (speaking) {
+    if (state === "thinking" || state === "idle") setState("speaking");
+    // a spoken conversation can be interrupted by talking; a typed one doesn't open the mic
+    if (settings.bargeIn && heardBySpeech && listeningSupported) void bargeIn.arm();
+    return;
+  }
   if (interrupting || state !== "speaking" || request) return; // cut off, or more of the reply is still arriving
   finishedReply();
 };
 
 /** The whole reply has been spoken. */
 function finishedReply(): void {
+  bargeIn.disarm();
   setState("idle");
   if (settings.handsFree && listeningSupported && heardBySpeech) startListening();
 }
@@ -88,12 +115,19 @@ const listener = new Listener({
   },
 });
 
+/** the user started talking over the voice */
+const bargeIn = new BargeIn(() => {
+  if (state !== "speaking" && state !== "thinking") return;
+  startListening();
+});
+
 /** true while `interrupt` is stopping the voice (which is not the reply finishing) */
 let interrupting = false;
 
 function interrupt(): void {
   request?.abort();
   request = null;
+  bargeIn.disarm(); // the recognizer needs the microphone next
   interrupting = true;
   voice.stop();
   interrupting = false;
@@ -185,6 +219,8 @@ function fillForm(): void {
   for (const k of ["apiKey", "baseUrl", "model", "systemPrompt", "body"] as const) field(k).value = settings[k];
   for (const k of ["rate", "pitch"] as const) field(k).value = String(settings[k]);
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
+  field<HTMLInputElement>("showHead").checked = settings.showHead;
+  field<HTMLInputElement>("bargeIn").checked = settings.bargeIn;
   showRanges();
 }
 
@@ -202,9 +238,29 @@ function readForm(): void {
     rate: Number(field("rate").value),
     pitch: Number(field("pitch").value),
     handsFree: field<HTMLInputElement>("handsFree").checked,
+    showHead: field<HTMLInputElement>("showHead").checked,
+    bargeIn: field<HTMLInputElement>("bargeIn").checked,
   };
   saveSettings(settings);
+  applySettings();
+}
+
+/** Push the settings into the voice and the head. */
+function applySettings(): void {
   voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch };
+  head.setBody(settings.body);
+  if (!voice.loaded) return;
+  if (!settings.bargeIn) bargeIn.disarm();
+  if (!settings.showHead) {
+    head.hide();
+    stage.hidden = true;
+  } else if (!head.shown) {
+    stage.hidden = false;
+    void head.show().then((ok) => {
+      if (ok) return;
+      stage.hidden = true; // no WebGL here: the chat works without the head
+    });
+  }
 }
 
 async function suggestModels(): Promise<void> {
@@ -235,14 +291,15 @@ $("test-voice").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- start
 
-voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch };
+applySettings();
 // for the end-to-end test and for poking at it from the console
-Object.assign(window, { chimeraVoiceChat: { voice, state: () => state } });
+Object.assign(window, { chimeraVoiceChat: { voice, head, state: () => state } });
 
 voice
   .load()
   .then(() => {
     setState("idle");
+    applySettings();
     hint.textContent = settings.apiKey ? (listeningSupported ? "Tap Talk, say something, and pause." : "Type a message to start.") : "Add your API key in Settings to start.";
   })
   .catch((e) => {
