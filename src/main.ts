@@ -1,7 +1,7 @@
 /** The page: talk or type, the model answers, Chimera says it, the caption follows along. */
 import { Listener, listeningSupported } from "./listen.ts";
 import { listModels, streamChat, type ChatMessage } from "./llm.ts";
-import { toSpeakable } from "./normalize.ts";
+import { MARKUP_PROMPT, renderReply, toSayable } from "./markup.ts";
 import { SentenceStream } from "./sentences.ts";
 import { DEFAULT_PROMPT, loadSettings, saveSettings, type Settings } from "./settings.ts";
 import { Voice, type Caption } from "./voice.ts";
@@ -158,12 +158,15 @@ async function send(text: string, spoken: boolean): Promise<void> {
   const el = bubble("assistant");
   const sentences = new SentenceStream();
   let reply = "";
-  const say = (parts: string[]) => parts.forEach((s) => voice.say(toSpeakable(s)));
+  const say = (parts: string[]) => parts.forEach((s) => voice.say(toSayable(s)));
+  voice.newReply();
   try {
-    const messages: ChatMessage[] = [{ role: "system", content: settings.systemPrompt }, ...history.slice(-HISTORY)];
+    // the marks are only asked for when the voice will act on them; they are stripped either way
+    const system = settings.naturalPitch ? `${settings.systemPrompt}\n\n${MARKUP_PROMPT}` : settings.systemPrompt;
+    const messages: ChatMessage[] = [{ role: "system", content: system }, ...history.slice(-HISTORY)];
     for await (const delta of streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, model: settings.model, messages, signal: ctl.signal })) {
       reply += delta;
-      el.textContent = reply;
+      renderReply(el, reply);
       log.scrollTop = log.scrollHeight;
       say(sentences.push(delta));
     }
@@ -221,6 +224,7 @@ function fillForm(): void {
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
   field<HTMLInputElement>("showHead").checked = settings.showHead;
   field<HTMLInputElement>("bargeIn").checked = settings.bargeIn;
+  field<HTMLInputElement>("naturalPitch").checked = settings.naturalPitch;
   showRanges();
 }
 
@@ -240,6 +244,7 @@ function readForm(): void {
     handsFree: field<HTMLInputElement>("handsFree").checked,
     showHead: field<HTMLInputElement>("showHead").checked,
     bargeIn: field<HTMLInputElement>("bargeIn").checked,
+    naturalPitch: field<HTMLInputElement>("naturalPitch").checked,
   };
   saveSettings(settings);
   applySettings();
@@ -247,7 +252,7 @@ function readForm(): void {
 
 /** Push the settings into the voice and the head. */
 function applySettings(): void {
-  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch };
+  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, natural: settings.naturalPitch };
   head.setBody(settings.body);
   if (!voice.loaded) return;
   if (!settings.bargeIn) bargeIn.disarm();
@@ -286,14 +291,15 @@ $("test-voice").addEventListener("click", async () => {
   readForm();
   await voice.unlock();
   voice.stop();
-  voice.say("Hello. This is how I sound.");
+  voice.newReply();
+  voice.say(toSayable("Hello! This is how I sound, and I *really* hope you like it. Do you?"));
 });
 
 // ---------------------------------------------------------------- start
 
 applySettings();
 // for the end-to-end test and for poking at it from the console
-Object.assign(window, { chimeraVoiceChat: { voice, head, state: () => state } });
+Object.assign(window, { chimeraVoiceChat: { voice, head, state: () => state, pitch: () => voice.pitch() } });
 
 voice
   .load()

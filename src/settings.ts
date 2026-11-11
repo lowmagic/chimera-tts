@@ -11,6 +11,8 @@ export interface Settings {
   pitch: number;
   /** listen again by itself once the reply has been spoken */
   handsFree: boolean;
+  /** natural pitch and the model's mood and emphasis marks, or Chimera's own flat pitch */
+  naturalPitch: boolean;
   /** stop the voice when the user starts talking over it */
   bargeIn: boolean;
   /** draw the 3D head (costs a phone some CPU the voice may want) */
@@ -32,6 +34,7 @@ export const DEFAULTS: Settings = {
   rate: 1,
   pitch: 1,
   handsFree: true,
+  naturalPitch: true,
   bargeIn: true,
   showHead: true,
 };
