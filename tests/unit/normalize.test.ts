@@ -24,12 +24,18 @@ test("money, times, percentages and decimals are spelled out", () => {
   expect(toSpeakable("$1,200")).toBe("one thousand two hundred dollars");
   expect(toSpeakable("Meet at 10:30 AM")).toBe("Meet at ten thirty ay em");
   expect(toSpeakable("at 9:05")).toBe("at nine oh five");
-  expect(toSpeakable("at 7pm or 8 a.m.")).toBe("at 7 pee em or 8 ay em");
+  expect(toSpeakable("at 7pm or 8 a.m.")).toBe("at seven pee em or eight ay em");
   expect(toSpeakable("I am here. Who am I?")).toBe("I am here. Who am I?");
-  expect(toSpeakable("50% off")).toBe("50 percent off");
-  expect(toSpeakable("pi is 3.14")).toBe("pi is 3 point one four");
+  expect(toSpeakable("50% off")).toBe("fifty percent off");
+  expect(toSpeakable("pi is 3.14")).toBe("pi is three point one four");
   expect(toSpeakable("the 1st and 3rd")).toBe("the first and third");
-  expect(toSpeakable("1,000,000 people")).toBe("1000000 people");
+  expect(toSpeakable("1,000,000 people")).toBe("one million people");
+});
+
+test("whole numbers and years", () => {
+  expect(toSpeakable("I have 42 cats.")).toBe("I have forty two cats.");
+  expect(toSpeakable("In 2026, or 1984, or 2005, or 1900.")).toBe("In twenty twenty six, or nineteen eighty four, or two thousand five, or one thousand nine hundred.");
+  expect(toSpeakable("GPT4 and B12")).toBe("GPT four and B twelve");
 });
 
 test("abbreviations, symbols and emoji", () => {

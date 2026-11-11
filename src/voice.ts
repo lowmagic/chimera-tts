@@ -9,9 +9,14 @@ import { initChimera } from "../vendor/chimera/src/wasm/chimera.ts";
 import { PRESETS, defaultF0 } from "../vendor/chimera/src/ui/body.ts";
 import type { BodyName } from "../vendor/chimera/src/worklet/protocol.ts";
 
+import type { Plan } from "../vendor/chimera/src/wasm/types.ts";
+import { wordsOf, type Mood, type Sayable } from "./markup.ts";
+import { planSpeech } from "./plan.ts";
+
 type Speech = typeof import("../vendor/chimera/src/ui/speech.ts");
 type Audio = typeof import("../vendor/chimera/src/audio/AudioEngine.ts");
-type SpokenPlan = import("../vendor/chimera/src/ui/speech.ts").SpokenPlan;
+type Engine = typeof import("../vendor/chimera/src/wasm/engine.ts");
+type Words = typeof import("../vendor/chimera/src/ui/words.ts");
 
 export type { BodyName };
 
@@ -21,6 +26,8 @@ export interface VoiceSettings {
   rate: number;
   /** pitch multiplier on the body's default pitch */
   pitch: number;
+  /** natural pitch (`prosody.ts`) or Chimera's own */
+  natural: boolean;
 }
 
 export interface Caption {
@@ -30,37 +37,50 @@ export interface Caption {
 }
 
 interface Current {
-  plan: SpokenPlan;
+  /** the schedule request's id (the worklet answers with it) */
+  id: number;
+  plan: Plan;
+  /** each word's span in the plan (s) */
+  words: { text: string; t0: number; t1: number }[];
   /** performance.now() when the worklet took the plan (null until it confirms) */
   startedAt: number | null;
   done: ReturnType<typeof setTimeout> | null;
 }
 
 export class Voice {
-  settings: VoiceSettings = { body: "male", rate: 1, pitch: 1 };
+  settings: VoiceSettings = { body: "male", rate: 1, pitch: 1, natural: true };
   onCaption: (c: Caption | null) => void = () => {};
   /** true while there is something being said or waiting to be said */
   onSpeaking: (speaking: boolean) => void = () => {};
 
   private speech: Speech | null = null;
   private audio: Audio | null = null;
-  private queue: string[] = [];
+  private engine: Engine | null = null;
+  private wordSpans: Words["wordSpans"] | null = null;
+  private queue: Sayable[] = [];
+  /** the mood the reply is in (a tag sets it for the sentences after it too) */
+  private mood: Mood = "neutral";
   private current: Current | null = null;
   private busy = false;
-  /** a sentence is being planned (it is not `current` yet): sentences arriving meanwhile wait */
-  private planning = false;
   private raf = 0;
   private lastAt = -2;
 
   /** Load the engine and the pronunciation dictionary. Needs no user gesture. */
   async load(): Promise<void> {
     await initChimera();
-    [this.speech, this.audio] = await Promise.all([import("../vendor/chimera/src/ui/speech.ts"), import("../vendor/chimera/src/audio/AudioEngine.ts")]);
+    const [speech, audio, engine, words] = await Promise.all([
+      import("../vendor/chimera/src/ui/speech.ts"),
+      import("../vendor/chimera/src/audio/AudioEngine.ts"),
+      import("../vendor/chimera/src/wasm/engine.ts"),
+      import("../vendor/chimera/src/ui/words.ts"),
+    ]);
+    [this.speech, this.audio, this.engine, this.wordSpans] = [speech, audio, engine, words.wordSpans];
     // without the dictionary the engine falls back to letter-to-sound rules: worse, but it talks
     await this.speech.g2p.load(`${import.meta.env.BASE_URL}data/cmudict.txt.gz`).catch((e) => console.warn("dictionary:", e));
-    this.speech.onPlan((p) => {
+    // the worklet confirms each plan it takes: that is when its words start
+    audio.engine.onPlanned((m) => {
       const c = this.current;
-      if (c && p && p.id === c.plan.id && p.offset !== null && c.startedAt === null) this.started(c);
+      if (c && m.id === c.id && c.startedAt === null) this.started(c);
     });
   }
 
@@ -88,11 +108,24 @@ export class Voice {
     return Math.sqrt(sum / buf.length);
   }
 
-  say(text: string): void {
-    if (!text.trim()) return;
-    this.queue.push(text);
+  /** A new reply starts: its mood is its own. */
+  newReply(): void {
+    this.mood = "neutral";
+  }
+
+  /** The voice's pitch right now (Hz), or null when it isn't voicing. */
+  pitch(): number | null {
+    const t = this.audio?.engine.latest?.t;
+    return t && t.voicing > 0.5 ? t.f0 : null;
+  }
+
+  say(s: Sayable | string): void {
+    if (typeof s === "string") s = { text: s, emphasis: [], mood: null };
+    if (s.mood) this.mood = s.mood;
+    if (!s.text.trim()) return;
+    this.queue.push({ ...s, mood: this.mood });
     this.setBusy(true);
-    if (!this.current && !this.planning) void this.next();
+    if (!this.current) this.next();
   }
 
   /** Stop mid-word and drop everything queued. */
@@ -100,33 +133,30 @@ export class Voice {
     this.queue = [];
     if (this.current?.done) clearTimeout(this.current.done);
     this.current = null;
-    this.speech?.stopSpeaking();
+    this.audio?.engine.stopSpeech();
     this.caption(null);
     this.setBusy(false);
   }
 
-  private async next(): Promise<void> {
-    const text = this.queue.shift();
-    if (text === undefined) {
+  private next(): void {
+    const item = this.queue.shift();
+    if (item === undefined) {
       this.current = null;
       this.caption(null);
       this.setBusy(false);
       return;
     }
-    const { speech, audio } = this, s = this.settings;
-    if (!speech || !audio) return;
-    const body = PRESETS[s.body];
+    const { speech, audio, engine, wordSpans } = this, s = this.settings;
+    if (!speech || !audio || !engine || !wordSpans) return;
+    const body = PRESETS[s.body], f0 = defaultF0(body) * s.pitch;
+    const phrases = speech.g2p.toPhrases(item.text);
+    if (!phrases.length) return this.next(); // nothing sayable in it (only symbols)
+    const plan = planSpeech(engine, phrases, { body, rate: s.rate, f0, natural: s.natural, emphasis: item.emphasis, wordCount: wordsOf(item.text).length, mood: item.mood ?? "neutral" });
     audio.engine.setBody(body);
-    this.planning = true;
-    let plan: SpokenPlan | null;
-    try {
-      plan = await speech.speakText(text, { ipa: false, body, rate: s.rate, f0: defaultF0(body) * s.pitch });
-    } finally {
-      this.planning = false;
-    }
-    if (!plan) return void this.next(); // nothing sayable in it (only symbols)
-    if (!this.busy) return speech.stopSpeaking(); // stopped while planning
-    const c: Current = { plan, startedAt: null, done: null };
+    // between pitch gestures the voice relaxes to its own pitch: make that this baseline
+    audio.engine.setSource({ f0 });
+    const id = audio.engine.schedule({ gestures: plan.gestures.map((g) => ({ ...g, targets: { ...g.targets } })), segments: plan.segments, end: plan.end });
+    const c: Current = { id, plan, words: wordSpans(phrases, plan), startedAt: null, done: null };
     this.current = c;
     // the worklet confirms within a few ms; if the message is lost, don't hang the queue
     c.done = setTimeout(() => this.current === c && c.startedAt === null && this.started(c), 400);
@@ -135,16 +165,16 @@ export class Voice {
   private started(c: Current): void {
     if (c.done) clearTimeout(c.done);
     c.startedAt = performance.now();
-    c.done = setTimeout(() => this.current === c && void this.next(), c.plan.plan.end * 1000);
+    c.done = setTimeout(() => this.current === c && this.next(), c.plan.end * 1000);
     this.lastAt = -2;
     cancelAnimationFrame(this.raf);
     const tick = () => {
       if (this.current !== c || c.startedAt === null) return;
       const t = (performance.now() - c.startedAt) / 1000;
-      const at = c.plan.words.findIndex((w) => t >= w.t0 && t < w.t1 + 0.05);
+      const at = c.words.findIndex((w) => t >= w.t0 && t < w.t1 + 0.05);
       if (at !== this.lastAt) {
         this.lastAt = at;
-        this.caption({ words: c.plan.words.map((w) => w.text), at });
+        this.caption({ words: c.words.map((w) => w.text), at });
       }
       this.raf = requestAnimationFrame(tick);
     };

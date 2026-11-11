@@ -12,7 +12,9 @@ import { join } from "node:path";
 const { chromium } = createRequire(import.meta.url)("playwright");
 
 const URL = "http://127.0.0.1:5328/";
-const REPLY = "Hello there, this is the first sentence of the reply. And here is a second one, with 2 numbers & a symbol!";
+// as a model writes when asked for the marks: a mood tag, one stressed word
+const REPLY = "[happy] Hello there, this is the *first* sentence of the reply. And here is a second one, with 2 numbers & a symbol!";
+const SHOWN = "Hello there, this is the first sentence of the reply. And here is a second one, with 2 numbers & a symbol!";
 const HEARD = "what is the capital of Australia";
 
 const fail = (msg) => {
@@ -126,6 +128,11 @@ try {
   // every word the caption lights, collected in the page (polling from here misses most of them)
   await page.evaluate(() => {
     window.litWords = [];
+    window.pitches = [];
+    setInterval(() => {
+      const f0 = window.chimeraVoiceChat.pitch();
+      if (f0) window.pitches.push(f0);
+    }, 20);
     new MutationObserver(() => {
       const w = document.querySelector("#caption .now")?.textContent;
       if (w && window.litWords.at(-1) !== w) window.litWords.push(w);
@@ -153,6 +160,7 @@ try {
   const secs = (Date.now() - t0) / 1000;
   check(peak > 0.01, `the voice made sound (peak level ${peak.toFixed(3)})`);
   const lit = await page.evaluate(() => window.litWords);
+  const pitches = await page.evaluate(() => window.pitches);
   const spoken = "hello there this is the first sentence of the reply and here is a second one with two numbers and a symbol".split(" ");
   // headless Chromium draws the head in software at a few frames a second, so a short word ("of",
   // "a") can pass between two frames: what is lit must be the spoken words in order, nearly all of them
@@ -161,7 +169,11 @@ try {
   check(inOrder && lit.length >= 0.8 * spoken.length, `the caption lit the words of both sentences in order (${lit.length} of ${spoken.length}: ${lit.join(" ")})`);
   check([...captions].some((c) => c.includes("two numbers and a symbol")), "numbers and symbols were spoken as words");
   check(secs > 4 && secs < 30, `speaking took a plausible ${secs.toFixed(1)} s for two sentences`);
-  check((await page.locator(".msg.assistant").textContent()) === REPLY, "the reply is shown as the model wrote it");
+  check((await page.locator(".msg.assistant").textContent()) === SHOWN, "the reply is shown without its mood tag and asterisks");
+  check((await page.locator(".msg.assistant em").textContent()) === "first", "and its stressed word is shown in italics");
+  check(/\[excited\]/.test(sent.messages?.[0]?.content ?? "") && /asterisks/.test(sent.messages[0].content), "the model was asked for mood and emphasis marks");
+  // few readings: headless Chromium draws the head in software and the page gets a few frames a second
+  check(pitches.length >= 5 && Math.max(...pitches) / Math.min(...pitches) > 1.4, `the pitch moves over a wide range (${pitches.length} readings, ${Math.min(...pitches).toFixed(0)} to ${Math.max(...pitches).toFixed(0)} Hz)`);
   check((await page.evaluate(() => window.chimeraVoiceChat.state())) === "idle", "back to idle afterwards");
   check((await page.locator("#caption").textContent()).trim() === "", "the caption clears");
 

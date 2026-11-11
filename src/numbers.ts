@@ -25,3 +25,12 @@ export function ordinal(n: number): string {
 
 /** Digits read one by one ("4 0 4" → "four zero four"). */
 export const digits = (s: string) => [...s].map((d) => ONES[Number(d)]).join(" ");
+
+/** A whole number the way it is said: a year in pairs ("twenty twenty six"), anything else in full. */
+export function spoken(n: number): string {
+  if (n >= 1100 && n <= 2099 && (n < 2000 || n > 2009) && n % 100 !== 0) {
+    const lo = n % 100;
+    return `${cardinal(Math.floor(n / 100))} ${lo < 10 ? "oh " + cardinal(lo) : cardinal(lo)}`;
+  }
+  return cardinal(n);
+}
