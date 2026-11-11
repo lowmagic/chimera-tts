@@ -3,6 +3,6 @@ dist
 .env
 .env.*
 *.local
-public/data/cmudict.txt.gz
+public/data/
 test-results
 .DS_Store
