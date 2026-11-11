@@ -67,6 +67,25 @@ bun run e2e          # after a build: headless Chromium, mocked model and recogn
 - Settings has the voice (adult male, adult female, child), speed, pitch and the personality
   prompt.
 
+## Using it with Hermes Agent
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) has an
+OpenAI-compatible API server, so this app can be its voice and face while Hermes keeps the memory
+and the tools. In `~/.hermes/.env`:
+
+```sh
+API_SERVER_ENABLED=true
+API_SERVER_KEY=<a long random key>
+API_SERVER_CORS_ORIGINS=<this app's origin, e.g. http://127.0.0.1:5327>
+```
+
+Run `hermes gateway`, then in this app's Settings set Endpoint to `http://127.0.0.1:8642/v1`, the
+API key to that key, and Model to `hermes-agent`.
+
+That key gives full access to the agent, terminal included. Keep the server on localhost, or reach
+it from a phone over a private HTTPS tunnel (Tailscale's `tailscale serve`, for one), never the
+open internet. Not tested against a real Hermes yet.
+
 ## Updating Chimera
 
 ```sh

@@ -12,12 +12,25 @@ export interface ChatOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * OpenRouter's app-attribution header, for OpenRouter only: a browser asks an endpoint's
+ * permission for every unusual header (CORS), and other servers (Hermes Agent, a local model)
+ * refuse the whole request over one they don't know.
+ */
+export function extraHeaders(baseUrl: string): Record<string, string> {
+  try {
+    return new URL(baseUrl).hostname.endsWith("openrouter.ai") ? { "X-Title": "Chimera Voice Chat" } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Yields the reply's text as it arrives. Throws with the provider's message on an error. */
 export async function* streamChat(o: ChatOptions): AsyncGenerator<string> {
   const res = await fetch(`${o.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     signal: o.signal,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${o.apiKey}`, "X-Title": "Chimera Voice Chat" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${o.apiKey}`, ...extraHeaders(o.baseUrl) },
     body: JSON.stringify({ model: o.model, messages: o.messages, stream: true }),
   });
   if (!res.ok || !res.body) {
