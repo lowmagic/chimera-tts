@@ -11,6 +11,13 @@ export interface ChatOptions {
   messages: ChatMessage[];
   /** OpenRouter only: route to providers that keep no data (Zero Data Retention) */
   zdr?: boolean;
+  /**
+   * Hermes Agent only: the conversation's id, sent as X-Hermes-Session-Id so the agent keeps one
+   * session for the whole chat instead of working out which one each request belongs to.
+   */
+  hermesSession?: string;
+  /** Hermes Agent only: called when the agent starts using a tool, with the tool's name */
+  onTool?: (name: string) => void;
   signal?: AbortSignal;
 }
 
@@ -67,14 +74,72 @@ export function identityNotice(baseUrl: string, model: string, previous?: string
   );
 }
 
+/**
+ * Why a request never got an answer, as far as a page can tell. A browser reports a server that
+ * is down, one that doesn't allow this site (CORS) and a blocked insecure address all the same
+ * way, so this names the likely causes for the address in question.
+ */
+export function unreachable(baseUrl: string, page: { origin: string; protocol: string }, hermes: boolean): string {
+  let host = baseUrl, local = false, insecure = false;
+  try {
+    const url = new URL(baseUrl);
+    host = url.host;
+    local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    insecure = url.protocol === "http:";
+  } catch {
+    return `"${baseUrl}" is not an address. Check the endpoint in Settings.`;
+  }
+  if (page.protocol === "https:" && insecure && !local)
+    return `Couldn't reach ${host}. This page is HTTPS and that address is plain HTTP on another machine, which browsers block. Give it an HTTPS address (Tailscale's "tailscale serve" does it) and use that as the endpoint.`;
+  if (hermes) return `Couldn't reach Hermes at ${host}. Check that "hermes gateway" is running with API_SERVER_ENABLED=true, and that API_SERVER_CORS_ORIGINS includes ${page.origin}.${local ? " The address is this device itself: from a phone, use the computer's HTTPS address instead." : ""}`;
+  return `Couldn't reach ${host}. Check the endpoint in Settings, that the server is running, and that it allows requests from ${page.origin} (CORS).`;
+}
+
+/** endpoints that turned the session header down (an older Hermes): not sent to them again */
+const noSessionHeader = new Set<string>();
+
+async function post(o: ChatOptions): Promise<Response> {
+  const send = (session: boolean) =>
+    fetch(`${o.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      signal: o.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${o.apiKey}`, ...extraHeaders(o.baseUrl), ...(session && o.hermesSession ? { "X-Hermes-Session-Id": o.hermesSession } : {}) },
+      body: JSON.stringify(requestBody(o)),
+    });
+  const withSession = !!o.hermesSession && !noSessionHeader.has(o.baseUrl);
+  try {
+    return await send(withSession);
+  } catch (e) {
+    if (o.signal?.aborted) throw e;
+    // a server that doesn't allow the session header refuses the whole request, and the browser
+    // won't say that was why: try once without it
+    if (withSession) {
+      try {
+        const res = await send(false);
+        noSessionHeader.add(o.baseUrl);
+        return res;
+      } catch (again) {
+        if (o.signal?.aborted) throw again;
+      }
+    }
+    throw new Error(unreachable(o.baseUrl, typeof location === "undefined" ? { origin: "this site", protocol: "" } : location, !!o.hermesSession));
+  }
+}
+
+/** The tool's name in a Hermes "tool progress" event, whatever shape the event has. */
+function toolName(data: string): string {
+  try {
+    const d = JSON.parse(data);
+    const name = d?.tool ?? d?.tool_name ?? d?.name ?? d?.function?.name;
+    return typeof name === "string" && name ? name.slice(0, 40) : "a tool";
+  } catch {
+    return "a tool";
+  }
+}
+
 /** Yields the reply's text as it arrives. Throws with the provider's message on an error. */
 export async function* streamChat(o: ChatOptions): AsyncGenerator<string> {
-  const res = await fetch(`${o.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    signal: o.signal,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${o.apiKey}`, ...extraHeaders(o.baseUrl) },
-    body: JSON.stringify(requestBody(o)),
-  });
+  const res = await post(o);
   if (!res.ok || !res.body) {
     let detail = "";
     try {
@@ -88,7 +153,7 @@ export async function* streamChat(o: ChatOptions): AsyncGenerator<string> {
     throw new Error(`The model request failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}.${hint}`);
   }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = "";
+  let buf = "", event = ""; // `event` is the name of the server-sent event being read, if it has one
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -97,17 +162,24 @@ export async function* streamChat(o: ChatOptions): AsyncGenerator<string> {
     while ((nl = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
-      if (!line.startsWith("data:")) continue; // comments (": OPENROUTER PROCESSING") and blanks
+      if (!line) event = ""; // a blank line ends an event
+      else if (line.startsWith("event:")) event = line.slice(6).trim();
+      if (!line.startsWith("data:")) continue; // comments (": OPENROUTER PROCESSING", ": keepalive") and the rest
       const data = line.slice(5).trim();
+      if (event === "hermes.tool.progress") {
+        o.onTool?.(toolName(data));
+        continue;
+      }
+      if (event && event !== "message") continue; // some other named event: not part of the reply
       if (data === "[DONE]") return;
-      let event: { error?: { message?: string }; choices?: { delta?: { content?: string } }[] };
+      let chunk: { error?: { message?: string }; choices?: { delta?: { content?: string } }[] };
       try {
-        event = JSON.parse(data);
+        chunk = JSON.parse(data);
       } catch {
         continue;
       }
-      if (event.error) throw new Error(event.error.message ?? "The model returned an error");
-      const text = event.choices?.[0]?.delta?.content;
+      if (chunk.error) throw new Error(chunk.error.message ?? "The model returned an error");
+      const text = chunk.choices?.[0]?.delta?.content;
       if (text) yield text;
     }
   }

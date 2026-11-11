@@ -3,7 +3,7 @@ import { Listener, listeningSupported } from "./listen.ts";
 import { identityNotice, isOpenRouter, listModels, streamChat, type ChatMessage } from "./llm.ts";
 import { MARKUP_PROMPT, renderReply, toSayable } from "./markup.ts";
 import { SentenceStream } from "./sentences.ts";
-import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadSettings, saveSettings, type Settings } from "./settings.ts";
+import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadSettings, saveSettings, switchBackend, type Backend, type Settings } from "./settings.ts";
 import { Voice, type Caption } from "./voice.ts";
 import { Head } from "./head.ts";
 import { BargeIn } from "./bargein.ts";
@@ -187,7 +187,11 @@ async function send(text: string, spoken: boolean): Promise<void> {
     }
     const system = [settings.systemPrompt, identity, ...(settings.naturalPitch ? [MARKUP_PROMPT] : [])].join("\n\n");
     const messages: ChatMessage[] = [{ role: "system", content: system }, ...history.slice(-HISTORY)];
-    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, signal: ctl.signal })) {
+    const hermes = settings.backend === "hermes";
+    const onTool = (name: string) => {
+      if (request === ctl && state === "thinking") statusEl.textContent = `using ${name}…`;
+    };
+    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, hermesSession: hermes ? hermesSession : undefined, onTool, signal: ctl.signal })) {
       lastBackend = { model, baseUrl }; // it answered: this is what the conversation is on now
       reply += delta;
       renderReply(el, reply);
@@ -242,8 +246,19 @@ function field<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElem
   return form.elements.namedItem(name) as T;
 }
 
+/** What the chosen backend needs from the person, shown under the choice. */
+function showBackend(): void {
+  const hermes = settings.backend === "hermes";
+  $("backend-hint").textContent = hermes
+    ? `Hermes keeps the memory and the tools; this is its voice. In ~/.hermes/.env set API_SERVER_ENABLED=true, an API_SERVER_KEY (the key below) and API_SERVER_CORS_ORIGINS=${location.origin}, then run "hermes gateway".`
+    : settings.backend === "custom" ? "Any server that speaks the OpenAI chat API: a local model, another provider." : "";
+  $("zdr-row").hidden = !isOpenRouter(settings.baseUrl);
+  field<HTMLInputElement>("apiKey").placeholder = hermes ? "your API_SERVER_KEY" : settings.backend === "openrouter" ? "sk-or-…" : "";
+}
+
 function fillForm(): void {
-  for (const k of ["apiKey", "baseUrl", "model", "systemPrompt", "body"] as const) field(k).value = settings[k];
+  for (const k of ["backend", "apiKey", "baseUrl", "model", "systemPrompt", "body"] as const) field(k).value = settings[k];
+  showBackend();
   for (const k of ["rate", "pitch"] as const) field(k).value = String(settings[k]);
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
   field<HTMLInputElement>("zdr").checked = settings.zdr;
@@ -259,7 +274,10 @@ function showRanges(): void {
 }
 
 function readForm(): void {
+  const chosen = field<HTMLSelectElement>("backend").value as Backend;
   settings = {
+    backend: settings.backend,
+    connections: settings.connections,
     apiKey: field("apiKey").value.trim(),
     baseUrl: field("baseUrl").value.trim() || settings.baseUrl,
     model: field("model").value.trim() || settings.model,
@@ -274,9 +292,19 @@ function readForm(): void {
     naturalPitch: field<HTMLInputElement>("naturalPitch").checked,
     trainedPitch: field<HTMLInputElement>("trainedPitch").checked,
   };
+  if (chosen !== settings.backend) {
+    // another backend: put this one's endpoint, key and model away and bring that one's back
+    settings = switchBackend(settings, chosen);
+    for (const k of ["apiKey", "baseUrl", "model"] as const) field(k).value = settings[k];
+    void suggestModels();
+  }
+  showBackend();
   saveSettings(settings);
   applySettings();
 }
+
+/** this visit's conversation, as a Hermes Agent knows it (one session, however the prompt changes) */
+const hermesSession = `chimera-voice-chat-${crypto.randomUUID?.() ?? Date.now().toString(36)}`;
 
 /** the site's trained pitch model, if it has one (public/models/prosody.json; see training/README.md) */
 let pitchModel: PitchModel | null = null;
