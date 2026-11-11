@@ -1,10 +1,11 @@
 /**
  * Renders text to WAV files through the wasm engine, offline, the way the page would say it:
- * once with Chimera's own pitch and once with natural pitch, for comparing by ear.
+ * once with Chimera's own pitch and once with natural pitch, for comparing by ear; and, given a
+ * trained pitch model (training/README.md), once with that.
  *
- *   bun tools/render.ts <outdir> [male|female|child] "A sentence. *Marked* up like a reply."...
+ *   bun tools/render.ts <outdir> [--model public/models/prosody.json] [male|female|child] "A sentence. *Marked* up like a reply."...
  *
- * Writes <n>-classic.wav and <n>-natural.wav per text, and prints each one's pitch range.
+ * Writes <n>-classic.wav, <n>-natural.wav and <n>-trained.wav per text, and prints each one's pitch range.
  * Needs the engine built (`bun run prepare-chimera`).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,11 +17,18 @@ import type { BodyName } from "../vendor/chimera/src/worklet/protocol.ts";
 import { toSayable, wordsOf, type Mood } from "../src/markup.ts";
 import { planSpeech } from "../src/plan.ts";
 import { SentenceStream } from "../src/sentences.ts";
+import { PitchModel } from "../src/trained.ts";
 
 const FS = 48000;
 const [outdir, ...rest] = process.argv.slice(2);
+let model: PitchModel | null = null;
+if (rest[0] === "--model") {
+  const path = rest[1];
+  rest.splice(0, 2);
+  model = PitchModel.from(JSON.parse(readFileSync(path, "utf8")), new Uint8Array(readFileSync(path.replace(/\.json$/, ".bin"))).buffer);
+}
 if (!outdir || !rest.length) {
-  console.error('usage: bun tools/render.ts <outdir> [male|female|child] "text"...');
+  console.error('usage: bun tools/render.ts <outdir> [--model prosody.json] [male|female|child] "text"...');
   process.exit(1);
 }
 const bodyName: BodyName = rest[0] in PRESETS ? (rest.shift() as BodyName) : "male";
@@ -39,8 +47,10 @@ function wav(samples: Float32Array): Buffer {
   return buf;
 }
 
+type Mode = "classic" | "natural" | "trained";
+
 /** One reply, sentence by sentence as the page queues them; returns the audio and the voiced pitches. */
-function render(text: string, natural: boolean): { audio: Float32Array; f0: number[] } {
+function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] } {
   const body = PRESETS[bodyName], f0 = defaultF0(body);
   const voice = new WasmVoice(FS);
   voice.setSource({ f0 });
@@ -53,7 +63,7 @@ function render(text: string, natural: boolean): { audio: Float32Array; f0: numb
     mood = s.mood ?? mood;
     const phrases = g2p.toPhrases(s.text);
     if (!phrases.length) continue;
-    const plan = planSpeech(engine, phrases, { body, rate: 1, f0, natural, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood });
+    const plan = planSpeech(engine, phrases, { body, rate: 1, f0, natural: mode !== "classic", model: mode === "trained" ? model : null, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood });
     voice.schedule(plan.gestures, 0.03, true);
     // 10 ms at a time, reading the pitch where the voice is voiced
     for (let n = Math.ceil((plan.end + 0.03) * FS); n > 0; n -= 480) {
@@ -70,9 +80,9 @@ function render(text: string, natural: boolean): { audio: Float32Array; f0: numb
 
 const semitones = (a: number, b: number) => 12 * Math.log2(a / b);
 rest.forEach((text, i) => {
-  for (const natural of [false, true]) {
-    const { audio, f0 } = render(text, natural);
-    const name = `${String(i + 1).padStart(2, "0")}-${natural ? "natural" : "classic"}.wav`;
+  for (const mode of ["classic", "natural", ...(model ? ["trained"] : [])] as Mode[]) {
+    const { audio, f0 } = render(text, mode);
+    const name = `${String(i + 1).padStart(2, "0")}-${mode}.wav`;
     writeFileSync(join(outdir, name), wav(audio));
     const sorted = [...f0].sort((a, b) => a - b), lo = sorted[Math.floor(0.05 * sorted.length)], hi = sorted[Math.floor(0.95 * sorted.length)];
     const mean = Math.exp(f0.reduce((s, v) => s + Math.log(v), 0) / f0.length);

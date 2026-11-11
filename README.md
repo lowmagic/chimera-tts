@@ -35,8 +35,10 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   English: accents on content words only, a small rise before a comma, a climb at a yes/no
   question, a fall at a full stop. The model is asked to start a reply with a mood (`[excited]`)
   and to put asterisks round a word it would stress; both shape the pitch and neither is read
-  aloud. It is rules (`src/prosody.ts`), not a trained model, and it only touches pitch: timing
-  and articulation are Chimera's.
+  aloud. By default it is rules (`src/prosody.ts`), and it only touches pitch: timing and
+  articulation are Chimera's. The rules can be replaced by a small model trained on recordings
+  of a person reading: [training/README.md](training/README.md) has the steps (an NVIDIA GPU and
+  under an hour). If `public/models/prosody.json` exists the app uses it, with a switch in Settings.
 - **Head**: Chimera's own 3D renderer (three.js), driven by the engine's live state. Drag to turn
   it. It can be turned off in Settings on a slow phone.
 - No server. The built site is static files, installable to a phone's home screen.

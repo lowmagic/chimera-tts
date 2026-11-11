@@ -7,6 +7,7 @@ import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadSettings, saveSettings, type Sett
 import { Voice, type Caption } from "./voice.ts";
 import { Head } from "./head.ts";
 import { BargeIn } from "./bargein.ts";
+import { PitchModel } from "./trained.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const log = $("log"), statusEl = $("status"), captionEl = $("caption"), hint = $("hint");
@@ -249,6 +250,7 @@ function fillForm(): void {
   field<HTMLInputElement>("showHead").checked = settings.showHead;
   field<HTMLInputElement>("bargeIn").checked = settings.bargeIn;
   field<HTMLInputElement>("naturalPitch").checked = settings.naturalPitch;
+  field<HTMLInputElement>("trainedPitch").checked = settings.trainedPitch;
   showRanges();
 }
 
@@ -270,14 +272,24 @@ function readForm(): void {
     showHead: field<HTMLInputElement>("showHead").checked,
     bargeIn: field<HTMLInputElement>("bargeIn").checked,
     naturalPitch: field<HTMLInputElement>("naturalPitch").checked,
+    trainedPitch: field<HTMLInputElement>("trainedPitch").checked,
   };
   saveSettings(settings);
   applySettings();
 }
 
+/** the site's trained pitch model, if it has one (public/models/prosody.json; see training/README.md) */
+let pitchModel: PitchModel | null = null;
+void PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`).then((m) => {
+  if (!m) return;
+  pitchModel = m;
+  document.querySelector<HTMLElement>("#trained-row")!.hidden = false;
+  applySettings();
+});
+
 /** Push the settings into the voice and the head. */
 function applySettings(): void {
-  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, natural: settings.naturalPitch };
+  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null };
   head.setBody(settings.body);
   if (!voice.loaded) return;
   if (!settings.bargeIn) bargeIn.disarm();

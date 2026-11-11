@@ -1,0 +1,12 @@
+# The pitch model's training tools. Install PyTorch for your GPU first (https://pytorch.org),
+# then: pip install -r requirements.txt
+torch>=2.4
+numpy
+scipy
+soundfile
+praat-parselmouth
+tqdm
+# only for aligning real recordings (prep without --alignments):
+transformers>=4.40
+# only for the tests:
+pytest

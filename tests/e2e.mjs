@@ -2,7 +2,7 @@
 // The model endpoint is mocked (a streamed reply in small pieces) and the browser's speech
 // recognizer is replaced with a fake that "hears" one sentence, so no network or microphone is used.
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +34,43 @@ function writeWav(file, secs, sample, rate = 48000) {
 /** a voice-like buzz: a 140 Hz pulse train's first harmonics, in syllables */
 const buzz = (t) => 0.5 * (0.5 + 0.5 * Math.sin(2 * Math.PI * 4 * t)) * [1, 2, 3, 4, 5, 6].reduce((s, k) => s + Math.sin(2 * Math.PI * 140 * k * t) / k, 0) * 0.4;
 const hiss = () => (Math.random() - 0.5) * 0.004;
+
+/**
+ * A site that has a trained pitch model (here the tests' tiny random one): the page loads it,
+ * offers the switch, and speaks with it.
+ */
+async function withTrainedModel(browser) {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  const fixture = (name) => readFileSync(join(import.meta.dirname, "fixtures", name));
+  await page.route("**/models/prosody.json", (route) => route.fulfill({ contentType: "application/json", body: fixture("prosody-tiny.json") }));
+  await page.route("**/models/prosody.bin", (route) => route.fulfill({ contentType: "application/octet-stream", body: fixture("prosody-tiny.bin") }));
+  await page.route("https://openrouter.ai/api/v1/**", (route) => route.fulfill({ status: 200, contentType: "text/event-stream", body: `data: ${JSON.stringify({ choices: [{ delta: { content: "Well, that depends. Do you *really* want to know?" } }] })}\n\ndata: [DONE]\n\n` }));
+  await page.addInitScript(() => localStorage.setItem("chimera-voice-chat:settings", JSON.stringify({ apiKey: "sk-test", handsFree: false, showHead: false })));
+  await page.goto(URL);
+  await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  await page.waitForFunction(() => !document.getElementById("trained-row").hidden, null, { timeout: 5000 });
+  check(await page.evaluate(() => window.chimeraVoiceChat.voice.settings.model != null), "a site with a trained pitch model loads it and uses it");
+  await page.evaluate(() => {
+    window.pitches = [];
+    setInterval(() => {
+      const f0 = window.chimeraVoiceChat.pitch();
+      if (f0) window.pitches.push(f0);
+    }, 20);
+  });
+  await page.fill("#text", "tell me");
+  await page.press("#text", "Enter");
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 15000 });
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "idle", null, { timeout: 60000 });
+  const pitches = await page.evaluate(() => window.pitches);
+  check(pitches.length >= 5 && pitches.every((f) => f > 50 && f < 300), `the voice speaks with the model's pitch (${pitches.length} readings, ${Math.min(...pitches).toFixed(0)} to ${Math.max(...pitches).toFixed(0)} Hz)`);
+  await page.click("#open-settings");
+  await page.uncheck('input[name="trainedPitch"]');
+  check(await page.evaluate(() => window.chimeraVoiceChat.voice.settings.model == null), "and the switch in settings goes back to the rules");
+  check(errors.length === 0, `no page errors with a trained model${errors.length ? ": " + errors.join(" | ") : ""}`);
+  await page.close();
+}
 
 /**
  * Talking over the voice: Chromium's fake microphone plays a WAV. With `talkAt` seconds of quiet
@@ -210,6 +247,7 @@ try {
   await page.click("#open-settings");
   await page.waitForFunction(() => document.querySelectorAll("#models option").length === 2);
   check(true, "settings lists the endpoint's models");
+  check(await page.evaluate(() => document.getElementById("trained-row").hidden), "no trained pitch model on the site, so no switch for one");
   check((await page.locator("#models option").first().getAttribute("value")) === "test/model-a", "suggested models the endpoint doesn't have are not offered");
   // another model with ZDR off: the next request says so, to OpenRouter and to the model
   await page.fill('input[name="model"]', "test/model-b");
@@ -230,6 +268,7 @@ try {
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.join(" | ") : ""}`);
   await page.screenshot({ path: "test-results/app.png" }).catch(() => {});
 
+  await withTrainedModel(browser);
   await talkOver(3);
   await talkOver(null);
 } catch (e) {
