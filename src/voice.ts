@@ -47,6 +47,8 @@ export class Voice {
   private queue: string[] = [];
   private current: Current | null = null;
   private busy = false;
+  /** a sentence is being planned (it is not `current` yet): sentences arriving meanwhile wait */
+  private planning = false;
   private raf = 0;
   private lastAt = -2;
 
@@ -90,7 +92,7 @@ export class Voice {
     if (!text.trim()) return;
     this.queue.push(text);
     this.setBusy(true);
-    if (!this.current) void this.next();
+    if (!this.current && !this.planning) void this.next();
   }
 
   /** Stop mid-word and drop everything queued. */
@@ -115,7 +117,13 @@ export class Voice {
     if (!speech || !audio) return;
     const body = PRESETS[s.body];
     audio.engine.setBody(body);
-    const plan = await speech.speakText(text, { ipa: false, body, rate: s.rate, f0: defaultF0(body) * s.pitch });
+    this.planning = true;
+    let plan: SpokenPlan | null;
+    try {
+      plan = await speech.speakText(text, { ipa: false, body, rate: s.rate, f0: defaultF0(body) * s.pitch });
+    } finally {
+      this.planning = false;
+    }
     if (!plan) return void this.next(); // nothing sayable in it (only symbols)
     if (!this.busy) return speech.stopSpeaking(); // stopped while planning
     const c: Current = { plan, startedAt: null, done: null };
