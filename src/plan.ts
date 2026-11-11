@@ -6,6 +6,7 @@
 import type { BodyMix, Phrase, Plan } from "../vendor/chimera/src/wasm/types.ts";
 import { MOODS, type Mood } from "./markup.ts";
 import { naturalPitch } from "./prosody.ts";
+import { trainedPitch, type PitchModel } from "./trained.ts";
 
 /** the parts of Chimera's engine facade this needs (imported only after the wasm has loaded) */
 export interface PlannerApi {
@@ -21,6 +22,8 @@ export interface SpeechOptions {
   f0: number;
   /** natural pitch (`prosody.ts`), or the planner's own */
   natural: boolean;
+  /** with natural pitch: a trained model to take the contour from, instead of the rules */
+  model?: PitchModel | null;
   emphasis?: readonly number[];
   /** how many words the emphasis indices were counted over */
   wordCount?: number;
@@ -36,5 +39,6 @@ export function planSpeech(api: PlannerApi, phrases: Phrase[], o: SpeechOptions)
   // way (it shouldn't), they would land on the wrong words, so they are dropped
   const said = phrases.reduce((n, p) => n + p.words.length, 0);
   const emphasis = o.emphasis && (o.wordCount ?? said) === said ? o.emphasis : [];
-  return { ...plan, gestures: naturalPitch(phrases, plan, counts, { base: o.f0, emphasis, mood: o.mood }) };
+  const pitch = { base: o.f0, emphasis, mood: o.mood };
+  return { ...plan, gestures: o.model ? trainedPitch(phrases, plan, counts, o.model, pitch) : naturalPitch(phrases, plan, counts, pitch) };
 }

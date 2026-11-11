@@ -12,6 +12,7 @@ import type { BodyName } from "../vendor/chimera/src/worklet/protocol.ts";
 import type { Plan } from "../vendor/chimera/src/wasm/types.ts";
 import { wordsOf, type Mood, type Sayable } from "./markup.ts";
 import { planSpeech } from "./plan.ts";
+import type { PitchModel } from "./trained.ts";
 
 type Speech = typeof import("../vendor/chimera/src/ui/speech.ts");
 type Audio = typeof import("../vendor/chimera/src/audio/AudioEngine.ts");
@@ -28,6 +29,8 @@ export interface VoiceSettings {
   pitch: number;
   /** natural pitch (`prosody.ts`) or Chimera's own */
   natural: boolean;
+  /** a trained pitch model to use with natural pitch (`trained.ts`), if one is loaded and wanted */
+  model?: PitchModel | null;
 }
 
 export interface Caption {
@@ -151,7 +154,7 @@ export class Voice {
     const body = PRESETS[s.body], f0 = defaultF0(body) * s.pitch;
     const phrases = speech.g2p.toPhrases(item.text);
     if (!phrases.length) return this.next(); // nothing sayable in it (only symbols)
-    const plan = planSpeech(engine, phrases, { body, rate: s.rate, f0, natural: s.natural, emphasis: item.emphasis, wordCount: wordsOf(item.text).length, mood: item.mood ?? "neutral" });
+    const plan = planSpeech(engine, phrases, { body, rate: s.rate, f0, natural: s.natural, model: s.model, emphasis: item.emphasis, wordCount: wordsOf(item.text).length, mood: item.mood ?? "neutral" });
     audio.engine.setBody(body);
     // between pitch gestures the voice relaxes to its own pitch: make that this baseline
     audio.engine.setSource({ f0 });

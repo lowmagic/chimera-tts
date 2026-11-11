@@ -15,6 +15,8 @@ export interface Settings {
   handsFree: boolean;
   /** natural pitch and the model's mood and emphasis marks, or Chimera's own flat pitch */
   naturalPitch: boolean;
+  /** with natural pitch: take the contour from the trained model when the site has one */
+  trainedPitch: boolean;
   /** stop the voice when the user starts talking over it */
   bargeIn: boolean;
   /** draw the 3D head (costs a phone some CPU the voice may want) */
@@ -38,6 +40,7 @@ export const DEFAULTS: Settings = {
   pitch: 1,
   handsFree: true,
   naturalPitch: true,
+  trainedPitch: true,
   bargeIn: true,
   showHead: true,
 };

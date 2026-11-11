@@ -6,3 +6,9 @@ dist
 public/data/
 test-results
 .DS_Store
+training/data/
+training/runs/
+training/.venv/
+__pycache__/
+.pytest_cache/
+/out/

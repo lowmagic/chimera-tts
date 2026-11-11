@@ -38,6 +38,25 @@ jobs:
         with:
           path: dist
 
+  # The pitch-training tools (training/README.md): their own tests, on CPU.
+  training:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: training
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install numpy scipy soundfile praat-parselmouth tqdm pytest
+      - run: pytest -q
+
   # Publishes main to GitHub Pages. Needs Pages turned on once: repository Settings → Pages →
   # Source: GitHub Actions. Until then this job fails and the build above still reports.
   deploy:

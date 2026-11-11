@@ -15,26 +15,18 @@
  *
  * Everything is in semitones around the baseline, so it suits any body and pitch setting. It only
  * builds gestures on the F0 control: the planner's timing and articulation are untouched, and a
- * trained pitch model could later supply the same thing.
+ * trained pitch model (`trained.ts`) supplies the same thing from recordings instead of rules.
  */
 import type { Gesture, Phrase, Plan, PlannedSegment } from "../vendor/chimera/src/wasm/types.ts";
 import { MOODS, type Mood } from "./markup.ts";
+import WORDS from "../shared/prosody-words.json";
 
-/** words that carry no pitch accent unless emphasized */
-const FUNCTION_WORDS = new Set(
-  ("a an the this that these those my your his her its our their some any no " +
-    "i me you he him she it we us they them myself yourself " +
-    "am is are was were be been being do does did have has had will would shall should can could may might must " +
-    "and or but nor so yet if as than because while although though that which who whom whose " +
-    "of to in on at by for with from into onto about over under after before between through during without within up out off " +
-    "not n't there here then just very too also " +
-    "i'm you're he's she's it's we're they're i've you've we've they've i'll you'll he'll she'll we'll they'll i'd you'd he'd she'd we'd they'd " +
-    "isn't aren't wasn't weren't don't doesn't didn't haven't hasn't hadn't won't wouldn't can't couldn't shouldn't that's there's what's let's").split(" "),
-);
-const WH_WORDS = new Set(["who", "whom", "whose", "what", "which", "when", "where", "why", "how", "what's", "who's", "where's", "how's"]);
+/** words that carry no pitch accent unless emphasized (the list is shared with the training code) */
+export const FUNCTION_WORDS = new Set<string>(WORDS.function);
+export const WH_WORDS = new Set<string>(WORDS.wh);
 
 /** the contour's sizes, in semitones */
-const P = {
+export const P = {
   /** how far the baseline drifts down over a phrase, per second, and at most */
   declPerSec: 1.1,
   declMax: 3,
@@ -63,17 +55,17 @@ const P = {
   jitter: 0.35,
 };
 
-const hz = (base: number, semitones: number) => base * 2 ** (semitones / 12);
+export const hz = (base: number, semitones: number) => base * 2 ** (semitones / 12);
 
 /** a syllable: its vowel's time in the plan (a diphthong's two halves as one) */
-interface Syllable {
+export interface Syllable {
   t0: number;
   t1: number;
   stress: number;
   word: number;
 }
 
-interface PhraseSpan {
+export interface PhraseSpan {
   syllables: Syllable[];
   /** [first word, one past the last) among the utterance's words */
   words: [number, number];
@@ -94,7 +86,7 @@ export interface PitchOptions {
  * Where the phrases' syllables fall in the plan. `counts[i]` is how many planned segments input
  * segment i became (Chimera's `plannedCounts`: a diphthong is two).
  */
-function layout(phrases: readonly Phrase[], plan: Plan, counts: readonly number[]): PhraseSpan[] {
+export function layout(phrases: readonly Phrase[], plan: Plan, counts: readonly number[]): PhraseSpan[] {
   const out: PhraseSpan[] = [];
   let k = 0, j = 0, word = 0;
   phrases.forEach((p, pi) => {
@@ -131,7 +123,7 @@ function wobble(word: string, n: number): number {
 }
 
 /** One pitch target held from t0 to t1 (the planner's own pitch gestures have this shape). */
-function hold(t0: number, t1: number, f0: number): Gesture {
+export function hold(t0: number, t1: number, f0: number): Gesture {
   const r = Math.max(0.02, Math.min(0.06, 0.5 * (t1 - t0)));
   return { t0, t1, rampIn: r, rampOut: r, strength: 1, targets: { f0 }, label: "pitch" };
 }
