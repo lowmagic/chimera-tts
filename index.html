@@ -41,6 +41,14 @@
     <dialog id="settings">
       <form method="dialog" id="settings-form">
         <h2>Settings</h2>
+        <label>Chat with
+          <select name="backend">
+            <option value="openrouter">OpenRouter</option>
+            <option value="hermes">Hermes Agent</option>
+            <option value="custom">Other (OpenAI-compatible)</option>
+          </select>
+          <small id="backend-hint"></small>
+        </label>
         <label>API key <small>kept only in this browser</small>
           <input name="apiKey" type="password" autocomplete="off" placeholder="sk-or-…" />
         </label>
@@ -51,7 +59,7 @@
           <input name="model" type="text" list="models" autocomplete="off" />
           <datalist id="models"></datalist>
         </label>
-        <label class="row"><input name="zdr" type="checkbox" /> Zero data retention <small>OpenRouter: only providers that keep nothing</small></label>
+        <label class="row" id="zdr-row"><input name="zdr" type="checkbox" /> Zero data retention <small>OpenRouter: only providers that keep nothing</small></label>
         <label>Voice
           <select name="body">
             <option value="male">Adult male</option>

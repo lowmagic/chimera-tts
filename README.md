@@ -97,15 +97,34 @@ and the tools. In `~/.hermes/.env`:
 ```sh
 API_SERVER_ENABLED=true
 API_SERVER_KEY=<a long random key>
-API_SERVER_CORS_ORIGINS=<this app's origin, e.g. http://127.0.0.1:5327>
+API_SERVER_CORS_ORIGINS=<this app's origin, e.g. https://www.example.com>
 ```
 
-Run `hermes gateway`, then in this app's Settings set Endpoint to `http://127.0.0.1:8642/v1`, the
-API key to that key, and Model to `hermes-agent`.
+Run `hermes gateway`. In this app's Settings choose **Chat with: Hermes Agent** and paste that key.
+The choice fills in the endpoint (`http://127.0.0.1:8642/v1`) and model (`hermes-agent`), shows
+the exact origin to put in `API_SERVER_CORS_ORIGINS`, and keeps Hermes's key apart from
+OpenRouter's, so switching between them is one tap.
 
-That key gives full access to the agent, terminal included. Keep the server on localhost, or reach
-it from a phone over a private HTTPS tunnel (Tailscale's `tailscale serve`, for one), never the
-open internet. Not tested against a real Hermes yet.
+With Hermes chosen the app:
+
+- sends an `X-Hermes-Session-Id`, new on each visit, so a chat is one Hermes session (if your
+  Hermes refuses the header, the app notices and carries on without it);
+- shows "using web_search…" while the agent runs a tool, and never speaks tool output;
+- still sends its personality prompt and the mood and emphasis instructions, which Hermes layers
+  on top of its own prompt.
+
+Where it works:
+
+- **Same computer, Chrome, Edge or Firefox**: `http://127.0.0.1:8642/v1` works from the HTTPS
+  site. Chrome may ask once for permission to reach devices on your local network.
+- **Phone, another computer, or Safari**: browsers block an HTTPS page from calling plain HTTP on
+  another machine, so Hermes needs an HTTPS address. On a Tailscale network, `tailscale serve --bg
+  8642` on the Hermes machine gives one (`https://<machine>.<tailnet>.ts.net`); use that plus
+  `/v1` as the Endpoint. Hermes can stay bound to 127.0.0.1.
+
+That key gives full access to the agent, terminal included. Never put the server on the open
+internet. Not tested against a real Hermes yet: the app's side is tested against a stand-in that
+follows Hermes's documentation.
 
 ## Updating Chimera
 

@@ -72,6 +72,48 @@ async function withTrainedModel(browser) {
   await page.close();
 }
 
+/** Choosing Hermes Agent in Settings: its own endpoint and key, one session, tool use shown. */
+async function withHermes(browser) {
+  const page = await browser.newPage();
+  const sent = [];
+  let release;
+  const held = new Promise((r) => (release = r));
+  await page.route("http://127.0.0.1:8642/v1/**", async (route) => {
+    const req = route.request(), cors = { "access-control-allow-origin": "*" };
+    if (req.url().endsWith("/models")) return route.fulfill({ headers: cors, json: { data: [{ id: "hermes-agent" }] } });
+    sent.push({ headers: req.headers(), body: req.postDataJSON() });
+    await held; // the agent is "using a tool" until the test has looked
+    await route.fulfill({ status: 200, headers: cors, contentType: "text/event-stream", body: `event: hermes.tool.progress\ndata: ${JSON.stringify({ tool: "web_search" })}\n\n: keepalive\n\ndata: ${JSON.stringify({ choices: [{ delta: { content: "It is sunny." } }] })}\n\ndata: [DONE]\n\n` });
+  });
+  await page.addInitScript(() => localStorage.getItem("chimera-voice-chat:settings") ?? localStorage.setItem("chimera-voice-chat:settings", JSON.stringify({ apiKey: "sk-or-key", handsFree: false, showHead: false })));
+  await page.goto(URL);
+  await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  await page.click("#open-settings");
+  await page.selectOption('select[name="backend"]', "hermes");
+  check((await page.inputValue('input[name="baseUrl"]')) === "http://127.0.0.1:8642/v1" && (await page.inputValue('input[name="model"]')) === "hermes-agent" && (await page.inputValue('input[name="apiKey"]')) === "", "choosing Hermes Agent fills in its endpoint and model, with a key of its own");
+  check((await page.locator("#backend-hint").textContent()).includes("API_SERVER_CORS_ORIGINS=http://127.0.0.1:5328") && (await page.locator("#zdr-row").isHidden()), "and says what Hermes needs to allow this site");
+  await page.fill('input[name="apiKey"]', "hermes-key");
+  await page.keyboard.press("Escape");
+  await page.fill("#text", "what is the weather");
+  await page.press("#text", "Enter");
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "thinking");
+  while (!sent.length) await page.waitForTimeout(50);
+  release();
+  await page.waitForFunction(() => document.getElementById("status").textContent.includes("web_search") || window.chimeraVoiceChat.state() !== "thinking", null, { timeout: 15000 });
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "idle", null, { timeout: 60000 });
+  const h = sent[0]?.headers ?? {};
+  check(h.authorization === "Bearer hermes-key" && /^chimera-voice-chat-/.test(h["x-hermes-session-id"] ?? "") && sent[0].body.provider === undefined, "the request goes to Hermes with its key and a session id, without OpenRouter's fields");
+  check((await page.locator(".msg.assistant").textContent()) === "It is sunny.", "the agent's reply is shown, and its tool use is not");
+  await page.fill("#text", "and tomorrow");
+  await page.press("#text", "Enter");
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "idle" && document.querySelectorAll(".msg.assistant").length === 2, null, { timeout: 60000 });
+  check(sent[1]?.headers["x-hermes-session-id"] === h["x-hermes-session-id"], "the next turn is the same Hermes session");
+  await page.click("#open-settings");
+  await page.selectOption('select[name="backend"]', "openrouter");
+  check((await page.inputValue('input[name="apiKey"]')) === "sk-or-key" && (await page.inputValue('input[name="baseUrl"]')) === "https://openrouter.ai/api/v1", "switching back to OpenRouter brings its key back");
+  await page.close();
+}
+
 /**
  * Talking over the voice: Chromium's fake microphone plays a WAV. With `talkAt` seconds of quiet
  * and then a voice, the reply must stop about then; with only quiet, it must play to its end.
@@ -269,6 +311,7 @@ try {
   await page.screenshot({ path: "test-results/app.png" }).catch(() => {});
 
   await withTrainedModel(browser);
+  await withHermes(browser);
   await talkOver(3);
   await talkOver(null);
 } catch (e) {
