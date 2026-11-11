@@ -1,9 +1,9 @@
 /** The page: talk or type, the model answers, Chimera says it, the caption follows along. */
 import { Listener, listeningSupported } from "./listen.ts";
-import { listModels, streamChat, type ChatMessage } from "./llm.ts";
+import { identityNotice, isOpenRouter, listModels, streamChat, type ChatMessage } from "./llm.ts";
 import { MARKUP_PROMPT, renderReply, toSayable } from "./markup.ts";
 import { SentenceStream } from "./sentences.ts";
-import { DEFAULT_PROMPT, loadSettings, saveSettings, type Settings } from "./settings.ts";
+import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadSettings, saveSettings, type Settings } from "./settings.ts";
 import { Voice, type Caption } from "./voice.ts";
 import { Head } from "./head.ts";
 import { BargeIn } from "./bargein.ts";
@@ -53,7 +53,12 @@ function setState(s: State): void {
   statusEl.textContent = { loading: "loading the voice…", idle: "ready", listening: "listening…", thinking: "thinking…", speaking: "speaking" }[s];
 }
 
-function bubble(kind: "user" | "assistant" | "error", text = ""): HTMLElement {
+/** the model and endpoint the last reply came from (a change is told to the model and shown) */
+let lastBackend: { model: string; baseUrl: string } | null = null;
+/** the model and endpoint the log last announced */
+let notedBackend = "";
+
+function bubble(kind: "user" | "assistant" | "error" | "note", text = ""): HTMLElement {
   const el = document.createElement("div");
   el.className = `msg ${kind}`;
   el.textContent = text;
@@ -86,6 +91,14 @@ voice.onSpeaking = (speaking) => {
   if (interrupting || state !== "speaking" || request) return; // cut off, or more of the reply is still arriving
   finishedReply();
 };
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
 
 /** The whole reply has been spoken. */
 function finishedReply(): void {
@@ -162,9 +175,19 @@ async function send(text: string, spoken: boolean): Promise<void> {
   voice.newReply();
   try {
     // the marks are only asked for when the voice will act on them; they are stripped either way
-    const system = settings.naturalPitch ? `${settings.systemPrompt}\n\n${MARKUP_PROMPT}` : settings.systemPrompt;
+    // which model this is, on every request: true from the first turn and after any change
+    const { model, baseUrl } = settings;
+    const identity = identityNotice(baseUrl, model, lastBackend?.model);
+    const zdrOn = settings.zdr && isOpenRouter(baseUrl);
+    const backend = `${model} via ${hostOf(baseUrl)}${zdrOn ? ", zero data retention" : ""}`;
+    if (backend !== notedBackend) {
+      log.insertBefore(Object.assign(document.createElement("div"), { className: "msg note", textContent: `${notedBackend ? "Now using" : "Using"} ${backend}` }), el);
+      notedBackend = backend;
+    }
+    const system = [settings.systemPrompt, identity, ...(settings.naturalPitch ? [MARKUP_PROMPT] : [])].join("\n\n");
     const messages: ChatMessage[] = [{ role: "system", content: system }, ...history.slice(-HISTORY)];
-    for await (const delta of streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, model: settings.model, messages, signal: ctl.signal })) {
+    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, signal: ctl.signal })) {
+      lastBackend = { model, baseUrl }; // it answered: this is what the conversation is on now
       reply += delta;
       renderReply(el, reply);
       log.scrollTop = log.scrollHeight;
@@ -222,6 +245,7 @@ function fillForm(): void {
   for (const k of ["apiKey", "baseUrl", "model", "systemPrompt", "body"] as const) field(k).value = settings[k];
   for (const k of ["rate", "pitch"] as const) field(k).value = String(settings[k]);
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
+  field<HTMLInputElement>("zdr").checked = settings.zdr;
   field<HTMLInputElement>("showHead").checked = settings.showHead;
   field<HTMLInputElement>("bargeIn").checked = settings.bargeIn;
   field<HTMLInputElement>("naturalPitch").checked = settings.naturalPitch;
@@ -242,6 +266,7 @@ function readForm(): void {
     rate: Number(field("rate").value),
     pitch: Number(field("pitch").value),
     handsFree: field<HTMLInputElement>("handsFree").checked,
+    zdr: field<HTMLInputElement>("zdr").checked,
     showHead: field<HTMLInputElement>("showHead").checked,
     bargeIn: field<HTMLInputElement>("bargeIn").checked,
     naturalPitch: field<HTMLInputElement>("naturalPitch").checked,
@@ -270,7 +295,10 @@ function applySettings(): void {
 
 async function suggestModels(): Promise<void> {
   const ids = await listModels(field("baseUrl").value.trim() || settings.baseUrl, field("apiKey").value.trim());
-  $("models").replaceChildren(...ids.map((id) => Object.assign(document.createElement("option"), { value: id })));
+  // the suggestions first (those the endpoint has, or all of them if it won't list its models)
+  const first = ids.length ? SUGGESTED_MODELS.filter((id) => ids.includes(id)) : SUGGESTED_MODELS;
+  const all = [...first, ...ids.filter((id) => !first.includes(id))];
+  $("models").replaceChildren(...all.map((id) => Object.assign(document.createElement("option"), { value: id })));
 }
 
 $("open-settings").addEventListener("click", () => {

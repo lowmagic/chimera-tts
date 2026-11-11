@@ -171,6 +171,9 @@ try {
   check(secs > 4 && secs < 30, `speaking took a plausible ${secs.toFixed(1)} s for two sentences`);
   check((await page.locator(".msg.assistant").textContent()) === SHOWN, "the reply is shown without its mood tag and asterisks");
   check((await page.locator(".msg.assistant em").textContent()) === "first", "and its stressed word is shown in italics");
+  check(/running as the model "nousresearch\/hermes-4-70b", served through openrouter\.ai/.test(sent.messages?.[0]?.content ?? ""), "the model is told which model and backend it is");
+  check((await page.locator(".msg.note").first().textContent()) === "Using nousresearch/hermes-4-70b via openrouter.ai, zero data retention", "and the log says so too");
+  check(sent.provider?.zdr === true && sent.provider?.data_collection === "deny" && sent.provider?.sort === "latency" && sent.reasoning?.enabled === false && sent.max_tokens === 400, "the request asks OpenRouter for zero data retention, the fastest provider and no reasoning");
   check(/\[excited\]/.test(sent.messages?.[0]?.content ?? "") && /asterisks/.test(sent.messages[0].content), "the model was asked for mood and emphasis marks");
   // few readings: headless Chromium draws the head in software and the page gets a few frames a second
   check(pitches.length >= 5 && Math.max(...pitches) / Math.min(...pitches) > 1.4, `the pitch moves over a wide range (${pitches.length} readings, ${Math.min(...pitches).toFixed(0)} to ${Math.max(...pitches).toFixed(0)} Hz)`);
@@ -182,6 +185,7 @@ try {
   await page.press("#text", "Enter");
   await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 15000 });
   check(requests[1]?.body.messages.length === 4, "the second request carries the conversation so far");
+  check((await page.locator(".msg.note").count()) === 1, "the backend is announced once while it stays the same");
   await page.waitForTimeout(600);
   await page.click("#mic");
   await page.waitForTimeout(400);
@@ -206,8 +210,22 @@ try {
   await page.click("#open-settings");
   await page.waitForFunction(() => document.querySelectorAll("#models option").length === 2);
   check(true, "settings lists the endpoint's models");
+  check((await page.locator("#models option").first().getAttribute("value")) === "test/model-a", "suggested models the endpoint doesn't have are not offered");
+  // another model with ZDR off: the next request says so, to OpenRouter and to the model
+  await page.fill('input[name="model"]', "test/model-b");
+  await page.uncheck('input[name="zdr"]');
   await page.uncheck('input[name="showHead"]');
   check(await page.evaluate(() => document.getElementById("stage").hidden && !document.querySelector("#stage canvas")), "the head can be turned off");
+
+  await page.keyboard.press("Escape");
+  await page.fill("#text", "which model are you");
+  await page.press("#text", "Enter");
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 15000 });
+  const third = requests[2]?.body ?? {};
+  check(third.model === "test/model-b" && third.provider?.zdr === undefined && third.provider?.sort === "latency", "a changed model and ZDR switched off go into the next request");
+  check(/running as the model "test\/model-b"/.test(third.messages?.[0]?.content ?? "") && /different model, "nousresearch\/hermes-4-70b"/.test(third.messages[0].content), "the model is told it has changed");
+  check((await page.locator(".msg.note").last().textContent()) === "Now using test/model-b via openrouter.ai", "and the log announces the change");
+  await page.click("#mic");
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.join(" | ") : ""}`);
   await page.screenshot({ path: "test-results/app.png" }).catch(() => {});
