@@ -24,6 +24,8 @@ import { chimeraModule, initChimera } from "../vendor/chimera/src/wasm/chimera.t
 import { writeGestures } from "../vendor/chimera/src/wasm/wire.ts";
 import { PRESETS, defaultF0 } from "../vendor/chimera/src/ui/body.ts";
 import { toSayable, wordsOf, type Mood } from "../src/markup.ts";
+import { withLexicon, wordsIn } from "../src/lexicon.ts";
+import { setKnownWords } from "../src/normalize.ts";
 import { planSpeech } from "../src/plan.ts";
 import { replySentences } from "../src/reply.ts";
 import { DEFAULTS } from "../src/settings.ts";
@@ -60,7 +62,9 @@ async function load(): Promise<(text: string) => Float32Array> {
   // the facade calls into the wasm as it is imported, so only now that it has loaded
   const engine = await import("../vendor/chimera/src/wasm/engine.ts");
   const g2p = new engine.EnglishG2P();
-  g2p.setDictionaryText(gunzipSync(asset("cmudict.txt.gz")).toString());
+  const dictionary = withLexicon(gunzipSync(asset("cmudict.txt.gz")).toString()), known = wordsIn(dictionary);
+  g2p.setDictionaryText(dictionary);
+  setKnownWords((w) => known.has(w));
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
   const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;

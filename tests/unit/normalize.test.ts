@@ -36,7 +36,7 @@ test("money, times, percentages and decimals are spelled out", () => {
 test("whole numbers and years", () => {
   expect(toSpeakable("I have 42 cats.")).toBe("I have forty two cats.");
   expect(toSpeakable("In 2026, or 1984, or 2005, or 1900.")).toBe("In twenty twenty six, or nineteen eighty four, or two thousand five, or one thousand nine hundred.");
-  expect(toSpeakable("GPT4 and B12")).toBe("GPT four and B twelve");
+  expect(toSpeakable("GPT4 and B12")).toBe("gee pee tee four and B twelve");
 });
 
 test("abbreviations, symbols and emoji", () => {

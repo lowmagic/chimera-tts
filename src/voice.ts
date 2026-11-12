@@ -11,6 +11,8 @@ import type { BodyName } from "../vendor/chimera/src/worklet/protocol.ts";
 
 import type { Plan } from "../vendor/chimera/src/wasm/types.ts";
 import { wordsOf, type Mood, type Sayable } from "./markup.ts";
+import { fetchDictionary, withLexicon, wordsIn } from "./lexicon.ts";
+import { setKnownWords } from "./normalize.ts";
 import { planSpeech } from "./plan.ts";
 import type { PitchModel } from "./trained.ts";
 
@@ -79,7 +81,14 @@ export class Voice {
     ]);
     [this.speech, this.audio, this.engine, this.wordSpans] = [speech, audio, engine, words.wordSpans];
     // without the dictionary the engine falls back to letter-to-sound rules: worse, but it talks
-    await this.speech.g2p.load(`${import.meta.env.BASE_URL}data/cmudict.txt.gz`).catch((e) => console.warn("dictionary:", e));
+    // (fetched here, not by the engine's own loader, to add this app's pronunciations to it)
+    await fetchDictionary(`${import.meta.env.BASE_URL}data/cmudict.txt.gz`)
+      .then((text) => {
+        const dictionary = withLexicon(text), words = wordsIn(dictionary);
+        speech.g2p.setDictionaryText(dictionary);
+        setKnownWords((w) => words.has(w));
+      })
+      .catch((e) => console.warn("dictionary:", e));
     // the worklet confirms each plan it takes: that is when its words start
     audio.engine.onPlanned((m) => {
       const c = this.current;
