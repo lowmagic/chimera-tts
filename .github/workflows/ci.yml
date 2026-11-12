@@ -9,7 +9,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # a pull request's newer push cancels its older run; every push to main runs to the end, so that
+  # each gets its build on `dist`
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -37,6 +39,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+      # the same files, for the dist branch (below)
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist
+          retention-days: 1
 
   # The pitch-training tools (training/README.md): their own tests, on CPU.
   training:
@@ -69,6 +78,51 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  # The built site on branch `dist`: one commit per push to main, its message naming the pushed
+  # commit's full SHA, index.html at the root. A server can pin a commit of it and serve the files
+  # as they are, building nothing (the NAS does: see "Using it with Hermes Agent" in the README).
+  dist:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: ${{ runner.temp }}/site
+      - name: Commit the build to dist
+        env:
+          SOURCE: ${{ github.sha }}
+          SITE: ${{ runner.temp }}/site
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898231+github-actions[bot]@users.noreply.github.com"
+          # another push's build may land first: then start again on top of it
+          for attempt in 1 2 3 4 5; do
+            if git fetch -q --depth=1 origin dist; then
+              # a re-run of this job: the build is already there
+              if git log -1 --format=%s FETCH_HEAD | grep -q "$SOURCE"; then exit 0; fi
+              git checkout -q -f --detach FETCH_HEAD
+            else
+              git checkout -q -f --orphan "build-$attempt" # the first build: dist doesn't exist yet
+            fi
+            git rm -rqf --ignore-unmatch .
+            git clean -fdxq
+            cp -R "$SITE"/. .
+            git add -A
+            git commit -q --allow-empty -m "Build of $SOURCE" -m "https://github.com/$REPO/commit/$SOURCE"
+            if git push -q origin HEAD:refs/heads/dist; then exit 0; fi
+            sleep $((attempt * 5))
+          done
+          exit 1
