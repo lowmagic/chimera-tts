@@ -33,7 +33,7 @@ test("the model is told what it is, and when the model before it was another", (
 
 // ---- Hermes Agent and other backends
 
-import { streamChat, unreachable } from "../../src/llm.ts";
+import { streamChat, toolProgress, unreachable, type ChatMessage, type ToolProgress } from "../../src/llm.ts";
 import { DEFAULTS, guessBackend, switchBackend } from "../../src/settings.ts";
 
 const sse = (text: string) => new Response(new Blob([text]).stream(), { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -44,17 +44,30 @@ async function collect(o: Partial<Parameters<typeof streamChat>[0]> & { baseUrl:
   return out;
 }
 
+const progress = (o: Record<string, string>) => `event: hermes.tool.progress\ndata: ${JSON.stringify(o)}\n\n`;
+
 test("a Hermes stream: tool progress is reported, not spoken, and keepalives are skipped", async () => {
   const real = globalThis.fetch;
   const sent: Record<string, string>[] = [];
   globalThis.fetch = (async (_url: string, init: RequestInit) => {
     sent.push(init.headers as Record<string, string>);
-    return sse(chunk("Let me look. ") + `event: hermes.tool.progress\ndata: ${JSON.stringify({ tool: "web_search", choices: [{ delta: { content: "NOT SPOKEN" } }] })}\n\n` + ": keepalive\n\n" + chunk("It is sunny.") + "data: [DONE]\n\n");
+    // as Hermes sends them: `running` with what the tool is doing, then `completed` with the same id
+    return sse(
+      chunk("Let me look. ") +
+        progress({ tool: "web_search", emoji: "🔍", label: "weather in Paris", toolCallId: "call_1", status: "running" }) +
+        ": keepalive\n\n" +
+        progress({ tool: "web_search", toolCallId: "call_1", status: "completed" }) +
+        chunk("It is sunny.") +
+        "data: [DONE]\n\n",
+    );
   }) as typeof fetch;
   try {
-    const tools: string[] = [];
-    expect(await collect({ baseUrl: "http://127.0.0.1:8642/v1", hermesSession: "abc", onTool: (n) => tools.push(n) })).toBe("Let me look. It is sunny.");
-    expect(tools).toEqual(["web_search"]);
+    const tools: ToolProgress[] = [];
+    expect(await collect({ baseUrl: "http://127.0.0.1:8642/v1", hermesSession: "abc", onTool: (t) => tools.push(t) })).toBe("Let me look. It is sunny.");
+    expect(tools).toEqual([
+      { id: "call_1", tool: "web_search", emoji: "🔍", label: "weather in Paris", done: false },
+      { id: "call_1", tool: "web_search", emoji: "", label: "web_search", done: true },
+    ]);
     expect(sent[0]["X-Hermes-Session-Id"]).toBe("abc");
     // no session, no header: other servers refuse requests with headers they don't know
     await collect({ baseUrl: "http://127.0.0.1:11434/v1" });
@@ -64,20 +77,54 @@ test("a Hermes stream: tool progress is reported, not spoken, and keepalives are
   }
 });
 
-test("a Hermes that refuses the session header is asked again without it, and not sent it after", async () => {
+test("a tool progress event of another shape still names a tool", () => {
+  expect(toolProgress(JSON.stringify({ tool_name: "terminal" }))).toEqual({ id: "terminal", tool: "terminal", emoji: "", label: "terminal", done: false });
+  expect(toolProgress("not json").tool).toBe("a tool");
+});
+
+const conversation: ChatMessage[] = [
+  { role: "system", content: "Be brief." },
+  { role: "user", content: "what is the weather" },
+  { role: "assistant", content: "It is sunny." },
+  { role: "user", content: "and tomorrow" },
+];
+
+test("in a Hermes conversation only the new turn is sent: Hermes has the earlier ones", async () => {
+  const real = globalThis.fetch;
+  const bodies: { messages: ChatMessage[] }[] = [];
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return sse(chunk("Rain.") + "data: [DONE]\n\n");
+  }) as typeof fetch;
+  try {
+    await collect({ baseUrl: "http://127.0.0.1:8642/v1", hermes: true, hermesSession: "api_1", messages: conversation });
+    expect(bodies[0].messages).toEqual([conversation[0], conversation[3]]);
+    // any other endpoint keeps nothing between requests, so it gets the whole conversation
+    await collect({ baseUrl: "http://127.0.0.1:11434/v1", messages: conversation });
+    expect(bodies[1].messages).toEqual(conversation);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("a Hermes that refuses the session header is asked again without it, with the whole conversation, and not sent it after", async () => {
   const real = globalThis.fetch;
   const withHeader: boolean[] = [];
+  const sentTurns: number[] = [];
   globalThis.fetch = (async (_url: string, init: RequestInit) => {
     const has = "X-Hermes-Session-Id" in (init.headers as Record<string, string>);
     withHeader.push(has);
     if (has) throw new TypeError("Failed to fetch"); // what a refused preflight looks like to a page
+    sentTurns.push(JSON.parse(String(init.body)).messages.length);
     return sse(chunk("Hello.") + "data: [DONE]\n\n");
   }) as typeof fetch;
   try {
-    const o = { baseUrl: "http://127.0.0.1:9999/v1", hermesSession: "abc" };
+    const o = { baseUrl: "http://127.0.0.1:9999/v1", hermesSession: "abc", messages: conversation };
     expect(await collect(o)).toBe("Hello.");
     expect(await collect(o)).toBe("Hello.");
     expect(withHeader).toEqual([true, false, false]);
+    // without the session, Hermes has only what the request carries
+    expect(sentTurns).toEqual([4, 4]);
   } finally {
     globalThis.fetch = real;
   }
@@ -98,6 +145,8 @@ test("a server that can't be reached is explained, by the likely cause", async (
   expect(unreachable("http://127.0.0.1:8642/v1", page, true)).toContain("from a phone");
   expect(unreachable("http://192.168.1.20:8642/v1", page, true)).toContain("plain HTTP on another machine");
   expect(unreachable("https://box.tail1234.ts.net/v1", page, true)).not.toContain("from a phone");
+  // the page served from Hermes's own address: CORS doesn't come into it
+  expect(unreachable("https://box.tail1234.ts.net/v1", { origin: "https://box.tail1234.ts.net", protocol: "https:" }, true)).not.toContain("CORS");
   expect(unreachable("https://api.example.com/v1", page, false)).toContain("(CORS)");
   expect(unreachable("nonsense", page, false)).toContain("not an address");
 });

@@ -96,3 +96,13 @@ dialog label[hidden] { display: none; }
 dialog small { opacity: 0.7; }
 dialog input[type="range"] { width: 100%; accent-color: var(--glow); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.chats-note { margin: 0; color: var(--dim); font-size: 13px; }
+.chats-note:empty { display: none; }
+.chat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 60dvh; overflow-y: auto; }
+.chat-list li { display: flex; gap: 6px; align-items: stretch; }
+.chat-list li > :first-child { flex: 1; min-width: 0; }
+.chat-list .open { display: grid; text-align: left; gap: 2px; }
+.chat-list .open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-list li.current .open { border-color: var(--glow); }
+.chat-list li button.ghost { font-size: 13px; padding: 6px 10px; }
+.chat-list li button.sure { border-color: var(--warn); color: var(--warn); }

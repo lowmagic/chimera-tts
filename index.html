@@ -18,6 +18,7 @@
     <header>
       <h1>Chimera Voice Chat</h1>
       <span id="status" class="status">loading the voice…</span>
+      <button id="open-chats" class="ghost" aria-label="Conversations" hidden>Chats</button>
       <button id="open-settings" class="ghost" aria-label="Settings">Settings</button>
     </header>
 
@@ -37,6 +38,18 @@
       <button id="mic" class="mic" aria-label="Talk" disabled><span id="mic-label">Talk</span></button>
       <p id="hint" class="hint"></p>
     </footer>
+
+    <dialog id="chats">
+      <form method="dialog" class="chats">
+        <h2>Conversations <small>kept by Hermes, on every device with its key</small></h2>
+        <button type="button" id="new-chat" class="primary">New conversation</button>
+        <p id="chats-note" class="chats-note"></p>
+        <ul id="chat-list" class="chat-list"></ul>
+        <div class="actions">
+          <button type="submit" class="ghost">Close</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="settings">
       <form method="dialog" id="settings-form">
