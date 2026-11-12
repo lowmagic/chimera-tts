@@ -334,6 +334,7 @@ var init_engine = __esm(() => {
 // tools/speak.ts
 init_chimera();
 import { readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { gunzipSync } from "node:zlib";
 
 // vendor/chimera/src/wasm/wire.ts
@@ -1182,15 +1183,18 @@ var DEFAULTS = {
 var FS = 48000;
 var LEAD = 0.03;
 var MAX_GESTURES = 4000;
-function wav(samples) {
-  const buf = Buffer.alloc(44 + 2 * samples.length);
-  buf.write("RIFF", 0), buf.writeUInt32LE(36 + 2 * samples.length, 4), buf.write("WAVEfmt ", 8), buf.writeUInt32LE(16, 16), buf.writeUInt16LE(1, 20), buf.writeUInt16LE(1, 22);
-  buf.writeUInt32LE(FS, 24), buf.writeUInt32LE(2 * FS, 28), buf.writeUInt16LE(2, 32), buf.writeUInt16LE(16, 34), buf.write("data", 36), buf.writeUInt32LE(2 * samples.length, 40);
-  samples.forEach((v, i) => buf.writeInt16LE(Math.round(32767 * Math.max(-1, Math.min(1, v))), 44 + 2 * i));
+function pcm16(samples) {
+  const buf = Buffer.alloc(2 * samples.length);
+  samples.forEach((v, i) => buf.writeInt16LE(Math.round(32767 * Math.max(-1, Math.min(1, v))), 2 * i));
   return buf;
 }
-async function speak(textPath, outPath) {
-  const text = readFileSync(textPath, "utf8");
+function wav(samples) {
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0), head.writeUInt32LE(36 + 2 * samples.length, 4), head.write("WAVEfmt ", 8), head.writeUInt32LE(16, 16), head.writeUInt16LE(1, 20), head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(FS, 24), head.writeUInt32LE(2 * FS, 28), head.writeUInt16LE(2, 32), head.writeUInt16LE(16, 34), head.write("data", 36), head.writeUInt32LE(2 * samples.length, 40);
+  return Buffer.concat([head, pcm16(samples)]);
+}
+async function load() {
   const asset = (name) => readFileSync(new URL(name, import.meta.url));
   await initChimera(asset("chimera.wasm"));
   const engine = await Promise.resolve().then(() => (init_engine(), exports_engine));
@@ -1199,39 +1203,70 @@ async function speak(textPath, outPath) {
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
   const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
-  const plans = [];
-  let mood = "neutral";
-  for (const sentence of replySentences(text)) {
-    const s = toSayable(sentence);
-    mood = s.mood ?? mood;
-    const phrases = g2p.toPhrases(s.text);
-    if (phrases.length)
-      plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
-  }
-  const x = new WebAssembly.Instance(chimeraModule(), {}).exports;
-  const h = x.engine_new(FS);
-  x.engine_set_body(h, body.female, body.child);
-  new Float64Array(x.memory.buffer, x.engine_values(h), 32).fill(NaN)[0] = f0;
-  x.engine_set_source(h);
-  x.engine_set_gate(h, 1);
-  const lengths = plans.map((p) => Math.ceil((p.end + LEAD) * FS));
-  const audio = new Float32Array(lengths.reduce((a, b) => a + b, 0) || Math.round(0.25 * FS));
-  let at = 0;
-  plans.forEach((plan, i) => {
-    x.engine_schedule(h, writeGestures(x.memory.buffer, x.engine_records(h), plan.gestures, MAX_GESTURES), LEAD, 1);
-    for (let m = 0, end = at + lengths[i];at < end; at += m) {
-      m = Math.min(128, end - at);
-      audio.set(new Float32Array(x.memory.buffer, x.engine_render(h, m), m), at);
+  return (text) => {
+    const plans = [];
+    let mood = "neutral";
+    for (const sentence of replySentences(text)) {
+      const s = toSayable(sentence);
+      mood = s.mood ?? mood;
+      const phrases = g2p.toPhrases(s.text);
+      if (phrases.length)
+        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
-  });
-  writeFileSync(outPath, wav(audio));
+    const x = new WebAssembly.Instance(chimeraModule(), {}).exports;
+    const h = x.engine_new(FS);
+    x.engine_set_body(h, body.female, body.child);
+    new Float64Array(x.memory.buffer, x.engine_values(h), 32).fill(NaN)[0] = f0;
+    x.engine_set_source(h);
+    x.engine_set_gate(h, 1);
+    const lengths = plans.map((p) => Math.ceil((p.end + LEAD) * FS));
+    const audio = new Float32Array(lengths.reduce((a, b) => a + b, 0) || Math.round(0.25 * FS));
+    let at = 0;
+    plans.forEach((plan, i) => {
+      x.engine_schedule(h, writeGestures(x.memory.buffer, x.engine_records(h), plan.gestures, MAX_GESTURES), LEAD, 1);
+      for (let m = 0, end = at + lengths[i];at < end; at += m) {
+        m = Math.min(128, end - at);
+        audio.set(new Float32Array(x.memory.buffer, x.engine_render(h, m), m), at);
+      }
+    });
+    return audio;
+  };
 }
-var [textPath, outPath, ...extra] = process.argv.slice(2);
+var oneLine = (e) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim();
+async function serve() {
+  const say = await load();
+  for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+    if (!line.trim())
+      continue;
+    let id = "";
+    let answer;
+    try {
+      const req = JSON.parse(line);
+      if (typeof req?.id === "string")
+        id = req.id;
+      if (typeof req?.id !== "string" || typeof req.text !== "string")
+        throw new Error('a request is {"id": "<string>", "text": "<string>"}');
+      answer = { id, rate: FS, pcm: pcm16(say(req.text)).toString("base64") };
+    } catch (e) {
+      console.error(`speak: ${id ? `${id}: ` : ""}${oneLine(e)}`);
+      answer = { id, error: oneLine(e) };
+    }
+    process.stdout.write(JSON.stringify(answer) + `
+`);
+  }
+}
+var args = process.argv.slice(2);
 try {
-  if (!textPath || !outPath || extra.length)
-    throw new Error("usage: node speak.mjs <text file> <out.wav>");
-  await speak(textPath, outPath);
+  if (args.length === 1 && args[0] === "--serve")
+    await serve();
+  else {
+    if (args.length !== 2)
+      throw new Error("usage: node speak.mjs <text file> <out.wav> | node speak.mjs --serve");
+    const [textPath, outPath] = args;
+    const text = readFileSync(textPath, "utf8");
+    writeFileSync(outPath, wav((await load())(text)));
+  }
 } catch (e) {
-  console.error(`speak: ${(e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ")}`);
+  console.error(`speak: ${oneLine(e)}`);
   process.exit(1);
 }
