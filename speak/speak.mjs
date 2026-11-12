@@ -487,6 +487,60 @@ var ABBREVIATIONS = [
   [/\bDr\./g, "Doctor"],
   [/\bSt\./g, "Saint"]
 ];
+var LETTERS = {
+  a: "ay",
+  b: "bee",
+  c: "see",
+  d: "dee",
+  e: "ee",
+  f: "f",
+  g: "gee",
+  h: "h",
+  i: "eye",
+  j: "jay",
+  k: "kay",
+  l: "el",
+  m: "em",
+  n: "en",
+  o: "oh",
+  p: "pee",
+  q: "cue",
+  r: "r",
+  s: "ess",
+  t: "tee",
+  u: "u",
+  v: "vee",
+  w: "w",
+  x: "ex",
+  y: "why",
+  z: "zee"
+};
+var ALWAYS_LETTERS = new Set(["US", "ID", "OS", "UN", "PM", "QA", "TA", "AR", "VR"]);
+var known = null;
+function setKnownWords(has) {
+  known = has;
+}
+var spell = (letters) => [...letters.toLowerCase()].map((ch) => LETTERS[ch] ?? ch).join(" ");
+function names(text) {
+  const isWord = (w) => !!known?.(w.toLowerCase());
+  const initials = (w) => ALWAYS_LETTERS.has(w) || (known ? !isWord(w) : !/[AEIOUY]/.test(w));
+  return text.replace(/(?<!\p{L})\p{L}{2,}(?!\p{L})/gu, (word) => {
+    if (!/[A-Z]/.test(word.slice(1)) || !/^[A-Za-z]+$/.test(word))
+      return word;
+    if (/^[A-Z]{2,6}s?$/.test(word)) {
+      const caps = word.replace(/s$/, "");
+      if (!initials(caps))
+        return word;
+      return ` ${spell(caps)}${word.endsWith("s") ? "'s" : ""} `;
+    }
+    if (isWord(word))
+      return word;
+    const parts = word.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(" ");
+    if (parts.length === 1)
+      return word;
+    return parts.map((p) => /^[A-Z]{2,6}$/.test(p) && initials(p) ? spell(p) : p).join(" ");
+  });
+}
 var plural = (n, word) => `${cardinal(n)} ${word}${n === 1 ? "" : "s"}`;
 function money(_, whole, cents) {
   const d = Number(whole.replace(/,/g, "")), c = cents ? Number(cents.padEnd(2, "0").slice(0, 2)) : 0;
@@ -511,6 +565,7 @@ function toSpeakable(text) {
   s = s.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, " ");
   for (const [re, to] of ABBREVIATIONS)
     s = s.replace(re, to);
+  s = names(s);
   s = s.replace(/\$\s?(\d[\d,]*)(?:\.(\d{1,2}))?/g, money);
   s = s.replace(/(\d)\s?([ap])\.?m\b\.?/gi, (_, d, x) => `${d} ${meridiem(x)}`);
   s = s.replace(/\b([ap])\.m\.?/gi, (_, x) => meridiem(x));
@@ -568,6 +623,51 @@ function toSayable(sentence) {
   }
   const text = toSpeakable(s.replaceAll(MARK, " "));
   return { text, emphasis, mood };
+}
+
+// src/lexicon.ts
+var LEXICON = {
+  ai: "EY2 AY1",
+  airbnb: "EH2 R B IY2 EH2 N B IY1",
+  anthropic: "AE0 N TH R AA1 P IH0 K",
+  chatgpt: "CH AE2 T JH IY2 P IY2 T IY1",
+  chimera: "K AY0 M IH1 R AH0",
+  covid: "K OW1 V IH0 D",
+  emoji: "IH0 M OW1 JH IY0",
+  emojis: "IH0 M OW1 JH IY0 Z",
+  json: "JH EY1 S AH0 N",
+  kubernetes: "K UW2 B ER0 N EH1 T IY0 Z",
+  lyft: "L IH1 F T",
+  macos: "M AE2 K OW2 EH1 S",
+  nous: "N UW1 S",
+  ollama: "OW0 L AA1 M AH0",
+  openai: "OW2 P AH0 N EY2 AY1",
+  openrouter: "OW1 P AH0 N R AW2 T ER0",
+  pytorch: "P AY1 T AO2 R CH",
+  qwen: "K W EH1 N",
+  synth: "S IH1 N TH",
+  tiktok: "T IH1 K T AA2 K",
+  typescript: "T AY1 P S K R IH2 P T",
+  venmo: "V EH1 N M OW0",
+  wasm: "W AA1 Z AH0 M"
+};
+function withLexicon(dictionary) {
+  return `${dictionary.replace(/\n*$/, `
+`)}${Object.entries(LEXICON).map(([w, p]) => `${w}	${p}`).join(`
+`)}
+`;
+}
+function wordsIn(dictionary) {
+  const words = new Set;
+  for (let at = 0;at < dictionary.length; ) {
+    const tab = dictionary.indexOf("\t", at), end = dictionary.indexOf(`
+`, at);
+    const stop = end < 0 ? dictionary.length : end;
+    if (tab > at && tab < stop)
+      words.add(dictionary.slice(at, tab));
+    at = stop + 1;
+  }
+  return words;
 }
 // shared/prosody-words.json
 var prosody_words_default = {
@@ -1199,7 +1299,9 @@ async function load() {
   await initChimera(asset("chimera.wasm"));
   const engine = await Promise.resolve().then(() => (init_engine(), exports_engine));
   const g2p = new engine.EnglishG2P;
-  g2p.setDictionaryText(gunzipSync(asset("cmudict.txt.gz")).toString());
+  const dictionary = withLexicon(gunzipSync(asset("cmudict.txt.gz")).toString()), known = wordsIn(dictionary);
+  g2p.setDictionaryText(dictionary);
+  setKnownWords((w) => known.has(w));
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
   const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
