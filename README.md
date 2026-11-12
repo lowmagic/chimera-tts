@@ -41,7 +41,8 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   under an hour). If `public/models/prosody.json` exists the app uses it, with a switch in Settings.
 - **Head**: Chimera's own 3D renderer (three.js), driven by the engine's live state. Drag to turn
   it. It can be turned off in Settings on a slow phone.
-- No server. The built site is static files, installable to a phone's home screen.
+- No server. The built site is static files, installable to a phone's home screen. Every push to
+  `main` is also published ready-built on branch `dist` (below).
 
 ## Run it
 
@@ -59,7 +60,7 @@ Open Settings, paste an API key, pick a model, then tap **Talk**.
 The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 
 ```sh
-bun run test         # unit tests (text, sentences, pitch contours, the talk-over detector)
+bun run test         # unit tests (text, sentences, pitch contours, the talk-over detector, Hermes's API)
 bun run build        # typecheck and build to dist/
 bun run e2e          # after a build: headless Chromium, mocked model and recognizer
 ```
@@ -91,29 +92,44 @@ bun tools/render.ts out female "[happy] Hello! This is *really* how I sound. Do 
 ## Using it with Hermes Agent
 
 [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) has an
-OpenAI-compatible API server, so this app can be its voice and face while Hermes keeps the memory
-and the tools. In `~/.hermes/.env`:
+OpenAI-compatible API server, so this app can be its voice and face while Hermes keeps the memory,
+the tools and the conversations. In `~/.hermes/.env`:
 
 ```sh
 API_SERVER_ENABLED=true
 API_SERVER_KEY=<a long random key>
-API_SERVER_CORS_ORIGINS=<this app's origin, e.g. https://www.example.com>
 ```
 
-Run `hermes gateway`. In this app's Settings choose **Chat with: Hermes Agent** and paste that key.
-The choice fills in the endpoint (`http://127.0.0.1:8642/v1`) and model (`hermes-agent`), shows
-the exact origin to put in `API_SERVER_CORS_ORIGINS`, and keeps Hermes's key apart from
-OpenRouter's, so switching between them is one tap.
+and run `hermes gateway`. Then either serve this app from Hermes's own address, or use it from
+another site.
 
-With Hermes chosen the app:
+### Served from Hermes's address
 
-- sends an `X-Hermes-Session-Id`, new on each visit, so a chat is one Hermes session (if your
-  Hermes refuses the header, the app notices and carries on without it);
-- shows "using web_search…" while the agent runs a tool, and never speaks tool output;
-- still sends its personality prompt and the mood and emphasis instructions, which Hermes layers
-  on top of its own prompt.
+This is how it runs on a home server, for a phone anywhere on the tailnet. Branch `dist` holds the
+built site: CI commits the build of every push to `main` to it, one commit each, whose message
+names the source commit's full SHA, with `index.html` at the root. The server pins a commit of
+`dist` and serves its files as they are (nothing is built there) from the Tailscale node that also
+passes `/v1/` and `/api/` to Hermes's API server (`http://127.0.0.1:8642/v1` and `/api`): the app
+and Hermes on one address, `https://<machine>.<tailnet>.ts.net/`. Next to `index.html` it puts a
+`deploy.json`:
 
-Where it works:
+```json
+{"backend": "hermes", "baseUrl": "/v1"}
+```
+
+At startup the app reads it, and until you save other settings it talks to Hermes at that
+address's `/v1` (a relative `baseUrl` is resolved against the page). The API key still comes from
+you: paste the `API_SERVER_KEY` in Settings, once on each device. The page and Hermes share one
+origin, so Hermes needs no `API_SERVER_CORS_ORIGINS` and nothing else needs `tailscale serve` by
+hand. The public site has no deploy.json, so nothing changes there.
+
+### From another site
+
+Add `API_SERVER_CORS_ORIGINS=<this app's origin, e.g. https://www.example.com>` to Hermes's
+`.env`. In this app's Settings choose **Chat with: Hermes Agent** and paste the key. The choice
+fills in the endpoint (`http://127.0.0.1:8642/v1`) and model (`hermes-agent`), shows the exact
+origin to put in `API_SERVER_CORS_ORIGINS`, and keeps Hermes's key apart from OpenRouter's, so
+switching between them is one tap.
 
 - **Same computer, Chrome, Edge or Firefox**: `http://127.0.0.1:8642/v1` works from the HTTPS
   site. Chrome may ask once for permission to reach devices on your local network.
@@ -122,9 +138,27 @@ Where it works:
   8642` on the Hermes machine gives one (`https://<machine>.<tailnet>.ts.net`); use that plus
   `/v1` as the Endpoint. Hermes can stay bound to 127.0.0.1.
 
+### With Hermes chosen
+
+- Conversations live in Hermes, one Hermes session each. **Chats** lists them (Hermes's title, or
+  the first words you said, and when), opens one with its earlier turns, starts a new one, renames
+  and deletes them. A new conversation becomes a session with its first turn
+  (`POST /api/sessions`). Each turn names it in `X-Hermes-Session-Id` and carries only the system
+  prompt and the new turn, since Hermes takes the earlier ones from the session. Any device with
+  the key can open a conversation and carry on with its context, and each device reopens the one it
+  had open last.
+- Only conversations started through Hermes's API server are listed: Hermes won't let this API
+  carry on a CLI, desktop or messaging-app session.
+- While the agent runs a tool the status line says what it is doing ("🔍 web_search: weather in
+  Paris…") until the tool has finished. Tool output is never spoken.
+- The app still sends its personality prompt and the mood and emphasis instructions, which Hermes
+  layers on top of its own prompt.
+- If your Hermes refuses the session header (an older one), the app notices and carries on without
+  it, sending the whole conversation each turn.
+
 That key gives full access to the agent, terminal included. Never put the server on the open
-internet. Not tested against a real Hermes yet: the app's side is tested against a stand-in that
-follows Hermes's documentation.
+internet. Not tested against a real Hermes yet: the app's side is tested against a stand-in written
+from Hermes v0.23.1's source and documentation.
 
 ## Updating Chimera
 
@@ -136,7 +170,8 @@ git add vendor/chimera && git commit
 
 ## Not yet
 
-Conversation memory between visits, a choice of speech recognizers, and dressing up the head.
+Conversation memory between visits without Hermes, a choice of speech recognizers, and dressing up
+the head.
 
 ## License
 

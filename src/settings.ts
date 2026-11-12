@@ -75,10 +75,50 @@ export const SUGGESTED_MODELS = ["nousresearch/hermes-4-70b", "cognitivecomputat
 
 const KEY = "chimera-voice-chat:settings";
 
+/**
+ * A deployment's choice of backend, from `deploy.json` next to index.html: the NAS serves this app
+ * from Hermes's own address with `{"backend": "hermes", "baseUrl": "/v1"}`. Only defaults: what the
+ * owner has saved wins, and the API key always comes from the owner.
+ */
+export interface Deploy {
+  backend: Backend;
+  /** absolute: a relative one in deploy.json is resolved against the page */
+  baseUrl: string;
+}
+
+/** deploy.json's contents as a Deploy, or null when they aren't one. */
+export function parseDeploy(json: unknown, page: string): Deploy | null {
+  if (!json || typeof json !== "object") return null;
+  const { backend, baseUrl } = json as Record<string, unknown>;
+  if (typeof backend !== "string" || !Object.hasOwn(BACKENDS, backend) || typeof baseUrl !== "string" || !baseUrl) return null;
+  try {
+    return { backend: backend as Backend, baseUrl: new URL(baseUrl, page).href };
+  } catch {
+    return null;
+  }
+}
+
+/** The site's deploy.json, if it has one (the public site doesn't). */
+export async function loadDeploy(url: string, page: string): Promise<Deploy | null> {
+  try {
+    const res = await fetch(url);
+    // a server that answers every path with index.html is a site without one too
+    return res.ok ? parseDeploy(await res.json(), page) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** where a backend starts out: the deployment's endpoint for its backend, the usual one otherwise */
+function startingConnection(to: Backend, deploy: Deploy | null): Connection {
+  const { baseUrl, apiKey, model } = BACKENDS[to];
+  return { baseUrl: deploy?.backend === to ? deploy.baseUrl : baseUrl, apiKey, model };
+}
+
 /** The settings with another backend chosen: the current connection is put away and that one's brought back. */
-export function switchBackend(s: Settings, to: Backend): Settings {
+export function switchBackend(s: Settings, to: Backend, deploy: Deploy | null = null): Settings {
   if (to === s.backend) return s;
-  const { baseUrl, apiKey, model } = s.connections[to] ?? BACKENDS[to];
+  const { baseUrl, apiKey, model } = s.connections[to] ?? startingConnection(to, deploy);
   return { ...s, backend: to, connections: { ...s.connections, [s.backend]: { baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model } }, baseUrl, apiKey, model };
 }
 
@@ -92,13 +132,24 @@ export function guessBackend(baseUrl: string): Backend {
   }
 }
 
-export function loadSettings(): Settings {
+/**
+ * What the owner saved, over the defaults. A deployment's backend and endpoint are the defaults
+ * while the owner has saved neither.
+ */
+export function settingsFrom(saved: Partial<Settings>, deploy: Deploy | null = null): Settings {
+  if (deploy && !saved.backend && !saved.baseUrl) {
+    const { baseUrl, model } = startingConnection(deploy.backend, deploy);
+    return { ...DEFAULTS, backend: deploy.backend, baseUrl, model, ...saved };
+  }
+  const s = { ...DEFAULTS, ...saved };
+  return saved.backend ? s : { ...s, backend: guessBackend(s.baseUrl) };
+}
+
+export function loadSettings(deploy: Deploy | null = null): Settings {
   try {
-    const saved: Partial<Settings> = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    const s = { ...DEFAULTS, ...saved };
-    return saved.backend ? s : { ...s, backend: guessBackend(s.baseUrl) };
+    return settingsFrom(JSON.parse(localStorage.getItem(KEY) ?? "{}"), deploy);
   } catch {
-    return { ...DEFAULTS };
+    return settingsFrom({}, deploy);
   }
 }
 

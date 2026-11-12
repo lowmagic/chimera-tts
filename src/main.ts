@@ -1,9 +1,10 @@
 /** The page: talk or type, the model answers, Chimera says it, the caption follows along. */
 import { Listener, listeningSupported } from "./listen.ts";
-import { identityNotice, isOpenRouter, listModels, streamChat, type ChatMessage } from "./llm.ts";
+import { identityNotice, isOpenRouter, listModels, streamChat, type ChatMessage, type ToolProgress } from "./llm.ts";
 import { MARKUP_PROMPT, renderReply, toSayable } from "./markup.ts";
 import { SentenceStream } from "./sentences.ts";
-import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadSettings, saveSettings, switchBackend, type Backend, type Settings } from "./settings.ts";
+import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadDeploy, loadSettings, saveSettings, switchBackend, type Backend, type Settings } from "./settings.ts";
+import { HermesError, conversationName, conversationTurns, deleteConversation, hermesRoot, listConversations, openedConversation, rememberConversation, renameConversation, startConversation, when, type Conversation } from "./sessions.ts";
 import { Voice, type Caption } from "./voice.ts";
 import { Head } from "./head.ts";
 import { BargeIn } from "./bargein.ts";
@@ -20,8 +21,11 @@ const HISTORY = 24;
 
 type State = "loading" | "idle" | "listening" | "thinking" | "speaking";
 let state: State = "loading";
-let settings: Settings = loadSettings();
-const history: ChatMessage[] = [];
+/** the site's deploy.json, if it has one: its backend and endpoint are the defaults until the owner saves their own */
+const deploy = await loadDeploy(`${import.meta.env.BASE_URL}deploy.json`, location.href);
+let settings: Settings = loadSettings(deploy);
+/** the conversation so far (a new array when another conversation is opened) */
+let history: ChatMessage[] = [];
 const voice = new Voice();
 const stage = $("stage");
 const head = new Head(stage);
@@ -45,13 +49,24 @@ document.addEventListener("visibilitychange", () => {
   else keepAwake(state !== "idle" && state !== "loading");
 });
 
+const STATUS: Record<State, string> = { loading: "loading the voice…", idle: "ready", listening: "listening…", thinking: "thinking…", speaking: "speaking" };
+
 function setState(s: State): void {
   state = s;
   keepAwake(s !== "idle" && s !== "loading");
   mic.dataset.state = s;
   mic.disabled = s === "loading";
   micLabel.textContent = { loading: "…", idle: "Talk", listening: "Send", thinking: "Stop", speaking: "Stop" }[s];
-  statusEl.textContent = { loading: "loading the voice…", idle: "ready", listening: "listening…", thinking: "thinking…", speaking: "speaking" }[s];
+  showStatus();
+}
+
+/** the tools Hermes is running for the reply being fetched, by its id for each call */
+const tools = new Map<string, ToolProgress>();
+
+/** The state, or what the agent is doing while a tool runs ("🔍 web_search: weather in Paris…"). */
+function showStatus(): void {
+  const t = [...tools.values()].at(-1);
+  statusEl.textContent = t ? `${t.emoji ? `${t.emoji} ` : ""}${t.label === t.tool ? `using ${t.tool}` : `${t.tool}: ${t.label}`}…` : STATUS[state];
 }
 
 /** the model and endpoint the last reply came from (a change is told to the model and shown) */
@@ -141,6 +156,7 @@ let interrupting = false;
 function interrupt(): void {
   request?.abort();
   request = null;
+  tools.clear();
   bargeIn.disarm(); // the recognizer needs the microphone next
   interrupting = true;
   voice.stop();
@@ -159,7 +175,8 @@ async function send(text: string, spoken: boolean): Promise<void> {
   listener.cancel();
   heardBySpeech = spoken;
   bubble("user", text);
-  history.push({ role: "user", content: text });
+  const turns = history; // this conversation's, even if another is opened while the reply comes
+  turns.push({ role: "user", content: text });
   if (!settings.apiKey) {
     bubble("error", "Add an API key in Settings first.");
     setState("idle");
@@ -177,7 +194,7 @@ async function send(text: string, spoken: boolean): Promise<void> {
   try {
     // the marks are only asked for when the voice will act on them; they are stripped either way
     // which model this is, on every request: true from the first turn and after any change
-    const { model, baseUrl } = settings;
+    const { model, baseUrl, apiKey } = settings;
     const identity = identityNotice(baseUrl, model, lastBackend?.model);
     const zdrOn = settings.zdr && isOpenRouter(baseUrl);
     const backend = `${model} via ${hostOf(baseUrl)}${zdrOn ? ", zero data retention" : ""}`;
@@ -186,12 +203,25 @@ async function send(text: string, spoken: boolean): Promise<void> {
       notedBackend = backend;
     }
     const system = [settings.systemPrompt, identity, ...(settings.naturalPitch ? [MARKUP_PROMPT] : [])].join("\n\n");
-    const messages: ChatMessage[] = [{ role: "system", content: system }, ...history.slice(-HISTORY)];
+    const messages: ChatMessage[] = [{ role: "system", content: system }, ...turns.slice(-HISTORY)];
     const hermes = settings.backend === "hermes";
-    const onTool = (name: string) => {
-      if (request === ctl && state === "thinking") statusEl.textContent = `using ${name}…`;
+    let hermesSession: string | undefined;
+    if (hermes) {
+      // Hermes keeps the conversation: a new one is started with its first turn
+      const root = hermesRoot(baseUrl);
+      hermesSession = conversation?.root === root ? conversation.id : (await startConversation(baseUrl, apiKey)).id;
+      if (!ctl.signal.aborted && conversation?.id !== hermesSession) {
+        conversation = { root, id: hermesSession };
+        rememberConversation(baseUrl, hermesSession);
+      }
+    }
+    const onTool = (t: ToolProgress) => {
+      if (request !== ctl) return;
+      if (t.done) tools.delete(t.id);
+      else tools.set(t.id, t);
+      showStatus();
     };
-    for await (const delta of streamChat({ baseUrl, apiKey: settings.apiKey, model, messages, zdr: settings.zdr, reasoning: settings.reasoning, hermes, hermesSession: hermes ? hermesSession : undefined, onTool, signal: ctl.signal })) {
+    for await (const delta of streamChat({ baseUrl, apiKey, model, messages, zdr: settings.zdr, reasoning: settings.reasoning, hermes, hermesSession, onTool, signal: ctl.signal })) {
       lastBackend = { model, baseUrl }; // it answered: this is what the conversation is on now
       reply += delta;
       renderReply(el, reply);
@@ -202,7 +232,7 @@ async function send(text: string, spoken: boolean): Promise<void> {
   } catch (e) {
     if (ctl.signal.aborted) {
       // talked over: keep what was said so far in the history, so the model knows
-      if (reply) history.push({ role: "assistant", content: reply });
+      if (reply) turns.push({ role: "assistant", content: reply });
       else el.remove();
       return;
     }
@@ -211,7 +241,9 @@ async function send(text: string, spoken: boolean): Promise<void> {
   }
   if (request !== ctl) return;
   request = null;
-  if (reply) history.push({ role: "assistant", content: reply });
+  tools.clear(); // a tool Hermes never said had finished is over with the reply
+  showStatus();
+  if (reply) turns.push({ role: "assistant", content: reply });
   else el.remove();
   if (!voice.speaking) finishedReply();
 }
@@ -249,9 +281,17 @@ function field<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElem
 /** What the chosen backend needs from the person, shown under the choice. */
 function showBackend(): void {
   const hermes = settings.backend === "hermes";
-  $("backend-hint").textContent = hermes
-    ? `Hermes keeps the memory and the tools; this is its voice. In ~/.hermes/.env set API_SERVER_ENABLED=true, an API_SERVER_KEY (the key below) and API_SERVER_CORS_ORIGINS=${location.origin}, then run "hermes gateway".`
-    : settings.backend === "custom" ? "Any server that speaks the OpenAI chat API: a local model, another provider." : "";
+  let fromHermes = false; // this page is served from Hermes's own address
+  try {
+    fromHermes = hermes && new URL(settings.baseUrl).origin === location.origin;
+  } catch {
+    // not an address yet
+  }
+  $("backend-hint").textContent = fromHermes
+    ? "Hermes keeps the memory, the tools and the conversations; this is its voice. Paste its API_SERVER_KEY below."
+    : hermes
+      ? `Hermes keeps the memory, the tools and the conversations; this is its voice. In ~/.hermes/.env set API_SERVER_ENABLED=true, an API_SERVER_KEY (the key below) and API_SERVER_CORS_ORIGINS=${location.origin}, then run "hermes gateway".`
+      : settings.backend === "custom" ? "Any server that speaks the OpenAI chat API: a local model, another provider." : "";
   $("zdr-row").hidden = !isOpenRouter(settings.baseUrl);
   field<HTMLInputElement>("apiKey").placeholder = hermes ? "your API_SERVER_KEY" : settings.backend === "openrouter" ? "sk-or-…" : "";
 }
@@ -295,7 +335,7 @@ function readForm(): void {
   };
   if (chosen !== settings.backend) {
     // another backend: put this one's endpoint, key and model away and bring that one's back
-    settings = switchBackend(settings, chosen);
+    settings = switchBackend(settings, chosen, deploy);
     for (const k of ["apiKey", "baseUrl", "model"] as const) field(k).value = settings[k];
     void suggestModels();
   }
@@ -304,8 +344,133 @@ function readForm(): void {
   applySettings();
 }
 
-/** this visit's conversation, as a Hermes Agent knows it (one session, however the prompt changes) */
-const hermesSession = `chimera-voice-chat-${crypto.randomUUID?.() ?? Date.now().toString(36)}`;
+// ---------------------------------------------------------------- conversations (Hermes Agent)
+
+/** the Hermes conversation this page is in; null for a new one, which its first turn starts */
+let conversation: { root: string; id: string } | null = null;
+const chats = $<HTMLDialogElement>("chats"), chatList = $("chat-list"), chatsNote = $("chats-note");
+
+/** Show a conversation's earlier turns (none for a new one) and carry on in it from here. */
+async function openConversation(id: string | null): Promise<void> {
+  if (state === "listening") listener.cancel();
+  if (state !== "idle" && state !== "loading") {
+    interrupt();
+    setState("idle");
+  }
+  const { baseUrl, apiKey } = settings;
+  conversation = id ? { root: hermesRoot(baseUrl), id } : null;
+  rememberConversation(baseUrl, id);
+  const turns: ChatMessage[] = (history = []);
+  log.replaceChildren();
+  lastBackend = null;
+  notedBackend = "";
+  if (!id) return;
+  try {
+    const earlier = await conversationTurns(baseUrl, apiKey, id);
+    if (history !== turns) return; // another one was opened meanwhile
+    const els = earlier.map((m) => {
+      const el = bubble(m.role === "user" ? "user" : "assistant", m.content);
+      if (m.role === "assistant") renderReply(el, m.content);
+      return el;
+    });
+    log.prepend(...els); // before anything said while they loaded
+    turns.unshift(...earlier);
+    log.scrollTop = log.scrollHeight;
+  } catch (e) {
+    if (history !== turns) return;
+    if (e instanceof HermesError && e.status === 404) {
+      // deleted, perhaps from another device: what is said next starts a new one
+      conversation = null;
+      rememberConversation(baseUrl, null);
+      bubble("note", "That conversation is gone from Hermes. What you say next starts a new one.");
+    } else bubble("error", `Couldn't open that conversation. ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+/** The conversations Hermes has, in the Conversations box. */
+async function showConversations(): Promise<void> {
+  chatList.replaceChildren();
+  if (!settings.apiKey) {
+    chatsNote.textContent = "Add Hermes's API key in Settings first.";
+    return;
+  }
+  chatsNote.textContent = "loading…";
+  try {
+    const list = await listConversations(settings.baseUrl, settings.apiKey);
+    chatsNote.textContent = list.length ? "" : "No conversations yet. Say something to start one.";
+    chatList.replaceChildren(...list.map(conversationRow));
+  } catch (e) {
+    chatsNote.textContent = e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** One conversation in the list: tap to open it, rename it, delete it (asks once more first). */
+function conversationRow(c: Conversation): HTMLElement {
+  const li = document.createElement("li");
+  li.classList.toggle("current", conversation?.id === c.id);
+  const open = Object.assign(document.createElement("button"), { type: "button", className: "open" });
+  const name = Object.assign(document.createElement("span"), { textContent: conversationName(c) });
+  open.append(name, Object.assign(document.createElement("small"), { textContent: when(c.at) }));
+  open.addEventListener("click", () => {
+    chats.close();
+    void openConversation(c.id);
+  });
+  const rename = Object.assign(document.createElement("button"), { type: "button", className: "ghost", textContent: "Rename" });
+  rename.addEventListener("click", () => {
+    const input = Object.assign(document.createElement("input"), { type: "text", value: c.title ?? conversationName(c), ariaLabel: "Name" });
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      const title = input.value.trim();
+      if (save && title && title !== c.title) {
+        try {
+          c = await renameConversation(settings.baseUrl, settings.apiKey, c.id, title);
+          name.textContent = conversationName(c);
+        } catch (e) {
+          chatsNote.textContent = e instanceof Error ? e.message : String(e);
+        }
+      }
+      input.replaceWith(open);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== "Escape") return;
+      e.preventDefault(); // not the dialog's: Enter would close it and Escape cancel it
+      void finish(e.key === "Enter");
+    });
+    input.addEventListener("blur", () => void finish(true));
+    open.replaceWith(input);
+    input.focus();
+    input.select();
+  });
+  const del = Object.assign(document.createElement("button"), { type: "button", className: "ghost", textContent: "Delete" });
+  del.addEventListener("click", async () => {
+    if (!del.classList.contains("sure")) {
+      del.classList.add("sure");
+      del.textContent = "Delete it?";
+      return;
+    }
+    try {
+      await deleteConversation(settings.baseUrl, settings.apiKey, c.id);
+      li.remove();
+      if (!chatList.children.length) chatsNote.textContent = "No conversations yet. Say something to start one.";
+      if (conversation?.id === c.id) void openConversation(null);
+    } catch (e) {
+      chatsNote.textContent = e instanceof Error ? e.message : String(e);
+    }
+  });
+  li.append(open, rename, del);
+  return li;
+}
+
+$("open-chats").addEventListener("click", () => {
+  chats.showModal();
+  void showConversations();
+});
+$("new-chat").addEventListener("click", () => {
+  chats.close();
+  void openConversation(null);
+});
 
 /** the site's trained pitch model, if it has one (public/models/prosody.json; see training/README.md) */
 let pitchModel: PitchModel | null = null;
@@ -320,6 +485,7 @@ void PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`).then((m) 
 function applySettings(): void {
   voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null };
   head.setBody(settings.body);
+  $("open-chats").hidden = settings.backend !== "hermes";
   if (!voice.loaded) return;
   if (!settings.bargeIn) bargeIn.disarm();
   if (!settings.showHead) {
@@ -367,6 +533,9 @@ $("test-voice").addEventListener("click", async () => {
 // ---------------------------------------------------------------- start
 
 applySettings();
+// carry on with the conversation this device last had open on this Hermes
+const opened = settings.backend === "hermes" && settings.apiKey ? openedConversation(settings.baseUrl) : null;
+if (opened) void openConversation(opened);
 // for the end-to-end test and for poking at it from the console
 Object.assign(window, { chimeraVoiceChat: { voice, head, state: () => state, pitch: () => voice.pitch() } });
 
