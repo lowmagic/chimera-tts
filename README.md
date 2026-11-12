@@ -60,9 +60,9 @@ Open Settings, paste an API key, pick a model, then tap **Talk**.
 The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 
 ```sh
-bun run test         # unit tests (text, sentences, pitch contours, the talk-over detector, Hermes's API)
-bun run build        # typecheck and build to dist/
-bun run e2e          # after a build: headless Chromium, mocked model and recognizer
+bun run test         # unit tests (text, Markdown replies, sentences, pitch contours, the talk-over detector, Hermes's API)
+bun run build        # typecheck and build to dist/ (with the speak command in dist/speak/)
+bun run e2e          # after a build: the speak command, then headless Chromium, mocked model and recognizer
 ```
 
 `bun run e2e` needs Playwright with Chromium installed; it is not a dependency of this repo.
@@ -159,6 +159,41 @@ switching between them is one tap.
 That key gives full access to the agent, terminal included. Never put the server on the open
 internet. Not tested against a real Hermes yet: the app's side is tested against a stand-in written
 from Hermes v0.23.1's source and documentation.
+
+### Hermes's own voice
+
+Hermes can say its replies in Chimera's voice wherever it speaks (its apps' voice mode and Read
+Aloud, voice messages), not only through this page. The build has a command for that,
+`dist/speak/speak.mjs`, published on `dist` with the site, with everything it loads beside it: the
+engine, the pronunciation dictionary and the trained pitch model. It needs only Node: no network,
+no `node_modules`, nothing written but its output.
+
+```sh
+node dist/speak/speak.mjs reply.txt reply.wav
+```
+
+reads the text (UTF-8) and writes one WAV of all of it (16-bit mono, 48 kHz), said as this page says
+a reply with its default settings: the same sentences, mood and emphasis marks, trained pitch and
+voice (adult male). Markdown is made sayable first (`src/reply.ts`): a link is its text, a bare URL
+is "link", a code block is "code block", a table row is its cells, emoji are dropped. If it can't,
+it prints one line to stderr and exits 1. It runs on one core at a little over a quarter of the
+audio's length: a 600-character reply (34 s of speech) takes 9 s on an Apple M4.
+
+Hermes runs it as a command TTS provider, in `config.yaml`:
+
+```yaml
+tts:
+  provider: chimera
+  providers:
+    chimera:
+      type: command
+      command: node /srv/chimera/speak/speak.mjs {text_path} {output_path}
+      format: wav
+      timeout: 600 # seconds without output; a long reply on a slow machine takes a while
+```
+
+where `/srv/chimera` is a commit of `dist`. Hermes cleans the text before it hands it over
+(Markdown, emoji and emphasis asterisks go; a mood tag stays) and converts the WAV as it needs.
 
 ## Updating Chimera
 

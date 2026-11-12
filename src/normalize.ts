@@ -38,7 +38,8 @@ export function toSpeakable(text: string): string {
   // markdown and markup
   s = s.replace(/```[\s\S]*?```/g, " code block. ");
   s = s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
-  s = s.replace(/https?:\/\/\S+/g, " link ");
+  // a URL is "link", and the full stop after it still ends the sentence
+  s = s.replace(/<?https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]]>?/g, " link ");
   s = s.replace(/^\s{0,3}(#{1,6}|[-*+]|\d+[.)])\s+/gm, "");
   s = s.replace(/[*_`~#>|]/g, " ");
   // emoji and other pictographs
