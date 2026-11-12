@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["bun", "vite/client"]
   },
-  "include": ["src", "tests/unit"]
+  "include": ["src", "tests/unit", "tools/speak.ts"]
 }

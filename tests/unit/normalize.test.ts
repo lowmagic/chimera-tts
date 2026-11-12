@@ -15,6 +15,7 @@ test("numbers as words", () => {
 test("markdown is stripped", () => {
   expect(toSpeakable("**Sure!** Here's a `thing`:\n- one\n- two")).toBe("Sure! Here's a thing, one two");
   expect(toSpeakable("See [the docs](https://example.com/a?b=1) now.")).toBe("See the docs now.");
+  expect(toSpeakable("More at https://example.com/docs, or <https://example.org/>.")).toBe("More at link, or link.");
   expect(toSpeakable("# Title\nBody")).toBe("Title Body");
 });
 
