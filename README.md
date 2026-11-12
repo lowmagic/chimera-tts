@@ -39,6 +39,10 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   articulation are Chimera's. The rules can be replaced by a small model trained on recordings
   of a person reading: [training/README.md](training/README.md) has the steps (an NVIDIA GPU and
   under an hour). If `public/models/prosody.json` exists the app uses it, with a switch in Settings.
+- **Names and initials**: words the dictionary lacks would be sounded out letter by letter,
+  badly ("ChatGPT" as "chat-ch-p-t"). `src/lexicon.ts` holds pronunciations for such names: add
+  a line whenever the voice mangles one. Initials it doesn't know are said as letters ("GPT"), and
+  joined names are split ("DailyTalk").
 - **Head**: Chimera's own 3D renderer (three.js), driven by the engine's live state. Drag to turn
   it. It can be turned off in Settings on a slow phone.
 - No server. The built site is static files, installable to a phone's home screen. Every push to

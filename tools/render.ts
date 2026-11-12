@@ -15,6 +15,8 @@ import { initEngine, WasmVoice } from "../vendor/chimera/tests/harness.ts";
 import { PRESETS, defaultF0 } from "../vendor/chimera/src/ui/body.ts";
 import type { BodyName } from "../vendor/chimera/src/worklet/protocol.ts";
 import { toSayable, wordsOf, type Mood } from "../src/markup.ts";
+import { withLexicon, wordsIn } from "../src/lexicon.ts";
+import { setKnownWords } from "../src/normalize.ts";
 import { planSpeech } from "../src/plan.ts";
 import { SentenceStream } from "../src/sentences.ts";
 import { PitchModel } from "../src/trained.ts";
@@ -37,7 +39,9 @@ mkdirSync(outdir, { recursive: true });
 await initEngine();
 const engine = await import("../vendor/chimera/src/wasm/engine.ts");
 const g2p = new engine.EnglishG2P();
-g2p.setDictionaryText(gunzipSync(readFileSync(new URL("../vendor/chimera/public/data/cmudict.txt.gz", import.meta.url))).toString());
+const dictionary = withLexicon(gunzipSync(readFileSync(new URL("../vendor/chimera/public/data/cmudict.txt.gz", import.meta.url))).toString()), known = wordsIn(dictionary);
+g2p.setDictionaryText(dictionary);
+setKnownWords((w) => known.has(w));
 
 function wav(samples: Float32Array): Buffer {
   const buf = Buffer.alloc(44 + 2 * samples.length);

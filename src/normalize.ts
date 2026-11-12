@@ -17,6 +17,46 @@ const ABBREVIATIONS: [RegExp, string][] = [
   [/\bSt\./g, "Saint"],
 ];
 
+/** how each letter is said, as words the dictionary has (not "a", "are", "you": those are reduced as function words) */
+const LETTERS: Record<string, string> = {
+  a: "ay", b: "bee", c: "see", d: "dee", e: "ee", f: "f", g: "gee", h: "h", i: "eye", j: "jay", k: "kay", l: "el", m: "em",
+  n: "en", o: "oh", p: "pee", q: "cue", r: "r", s: "ess", t: "tee", u: "u", v: "vee", w: "w", x: "ex", y: "why", z: "zee",
+};
+/** capitals that are letters even though they spell a word */
+const ALWAYS_LETTERS = new Set(["US", "ID", "OS", "UN", "PM", "QA", "TA", "AR", "VR"]);
+
+/** whether the voice has a pronunciation for a (lowercase) word; set once the dictionary loads */
+let known: ((word: string) => boolean) | null = null;
+export function setKnownWords(has: ((word: string) => boolean) | null): void {
+  known = has;
+}
+
+const spell = (letters: string) => [...letters.toLowerCase()].map((ch) => LETTERS[ch] ?? ch).join(" ");
+
+/**
+ * Names and initials the voice would otherwise sound out letter by letter, badly. A word the
+ * dictionary knows is left alone ("NASA", "GitHub", a shouted "STOP"). Otherwise a name written
+ * as joined words is split ("DailyTalk"), and a run of capitals is said as its letters ("GPT").
+ */
+function names(text: string): string {
+  const isWord = (w: string) => !!known?.(w.toLowerCase());
+  // before the dictionary has loaded nothing is known: then only capitals with no vowel are letters
+  const initials = (w: string) => ALWAYS_LETTERS.has(w) || (known ? !isWord(w) : !/[AEIOUY]/.test(w));
+  return text.replace(/(?<!\p{L})\p{L}{2,}(?!\p{L})/gu, (word) => {
+    if (!/[A-Z]/.test(word.slice(1)) || !/^[A-Za-z]+$/.test(word)) return word; // an ordinary word
+    if (/^[A-Z]{2,6}s?$/.test(word)) {
+      const caps = word.replace(/s$/, "");
+      if (!initials(caps)) return word;
+      return ` ${spell(caps)}${word.endsWith("s") ? "'s" : ""} `;
+    }
+    if (isWord(word)) return word;
+    // "DailyTalk" → "Daily Talk", "GPTModel" → "GPT Model", then each part on its own
+    const parts = word.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(" ");
+    if (parts.length === 1) return word;
+    return parts.map((p) => (/^[A-Z]{2,6}$/.test(p) && initials(p) ? spell(p) : p)).join(" ");
+  });
+}
+
 const plural = (n: number, word: string) => `${cardinal(n)} ${word}${n === 1 ? "" : "s"}`;
 
 function money(_: string, whole: string, cents?: string): string {
@@ -45,6 +85,8 @@ export function toSpeakable(text: string): string {
   // emoji and other pictographs
   s = s.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, " ");
   for (const [re, to] of ABBREVIATIONS) s = s.replace(re, to);
+  // "a.m." before names: its letters are not initials
+  s = names(s);
   // money, times, percentages, ordinals, decimals, thousands separators
   s = s.replace(/\$\s?(\d[\d,]*)(?:\.(\d{1,2}))?/g, money);
   // "am" is a word: it is a time of day only straight after a number, or dotted ("a.m.")
