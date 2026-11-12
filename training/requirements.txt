@@ -6,7 +6,9 @@ scipy
 soundfile
 praat-parselmouth
 tqdm
-# only for aligning real recordings (prep without --alignments):
+# only for aligning real recordings (prep without --alignments) and for `python -m clarity`:
 transformers>=4.40
+# only for `python -m clarity`'s list of common words:
+wordfreq
 # only for the tests:
 pytest
