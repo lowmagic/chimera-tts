@@ -1,0 +1,2 @@
+var e={male:{female:0,child:0},female:{female:1,child:0},child:{female:0,child:1}},t=e=>Number.isFinite(e)?Math.min(1,Math.max(0,e)):0;function n(e){let n=t(e.female),r=t(e.child);return[[`male`,(1-r)*(1-n)],[`female`,(1-r)*n],[`child`,r]]}function r(e){return n(e).find(([,e])=>e===1)?.[0]??null}function i(e,t){return!!e&&!!t&&e.female===t.female&&e.child===t.child}function a(e,t){let i=r(e);return i?t[i]:Math.exp(n(e).reduce((e,[n,r])=>e+r*Math.log(t[n]),0))}var o=e=>a(e,{male:110,female:205,child:260});export{i,n,o as r,e as t};
+//# sourceMappingURL=body-DG0xny6z.js.map

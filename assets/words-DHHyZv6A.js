@@ -1,0 +1,1 @@
+export{t as wordSpans}from"./words-Cpmo7Kfz.js";

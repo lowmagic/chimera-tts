@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0b0f0c"/>
+  <g fill="none" stroke="#5dff9a" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <!-- a head in profile, facing right, mouth open -->
+    <path d="M214 428v-58c-58-22-96-74-96-136 0-80 62-142 142-142 76 0 134 54 140 126l34 62-34 12v30c0 22-16 38-38 38h-28"/>
+    <path d="M334 300h-44" stroke="#ff8fd0"/>
+    <!-- sound -->
+    <path d="M424 250q22 26 0 52M452 226q40 50 0 100" stroke="#5db8ff" stroke-width="14"/>
+  </g>
+</svg>

@@ -1,0 +1,2 @@
+import{I as e}from"./engine-CCPDcK_U.js";function t(t,n){let r=[],i=e(t.flatMap(e=>e.segments.map(e=>e.ipa))),a=0,o=0;for(let e of t){let t=0,s=null,c=``;e.segments.forEach((l,u)=>{let d=i[a++],f=n.segments[o],p=n.segments[o+d-1];o+=d,f&&p&&(s??=f.t0,c+=l.ipa,(l.wordEnd||u===e.segments.length-1)&&(r.push({text:e.words?.[t]??c,t0:s,t1:p.t1}),t++,s=null,c=``))})}return r}export{t};
+//# sourceMappingURL=words-Cpmo7Kfz.js.map
