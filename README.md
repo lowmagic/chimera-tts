@@ -195,6 +195,20 @@ tts:
 where `/srv/chimera` is a commit of `dist`. Hermes cleans the text before it hands it over
 (Markdown, emoji and emphasis asterisks go; a mood tag stays) and converts the WAV as it needs.
 
+A speech server that says many replies keeps one running instead, so the engine, dictionary and
+pitch model load once:
+
+```sh
+node dist/speak/speak.mjs --serve
+```
+
+reads one JSON request per line on stdin, `{"id": "1", "text": "Hello there."}`, and answers each,
+in order, with one line on stdout: `{"id": "1", "rate": 48000, "pcm": "<base64>"}`, the whole text
+as 16-bit little-endian mono PCM said as above, or `{"id": "1", "error": "<one line>"}` (a line that
+isn't a request is answered with an empty id). Nothing else goes to stdout; diagnostics go to
+stderr. It exits 0 when stdin closes. Loading takes about 0.16 s on an Apple M4, so a 10-word
+sentence takes 0.84 s served against 1.0 s as a command; the rest is the engine saying it.
+
 ## Updating Chimera
 
 ```sh
