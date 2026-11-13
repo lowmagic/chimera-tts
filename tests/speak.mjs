@@ -41,6 +41,15 @@ if (ok.status === 0) {
   check(head < 0.01 * rms && tail < 0.01 * rms, `it starts and ends in silence (first 40 ms at ${(head / rms).toFixed(4)} of the speech's level, last 40 ms at ${(tail / rms).toFixed(4)})`);
 }
 
+// the page's sliders as flags: a slower rate is a longer file, and a flag it doesn't know is an error
+const slow = join(dir, "slow.wav"), slowed = speak("--rate", "0.6", "--plosives=2", text, slow, "--timing", "on");
+const seconds = (path) => { const w = readFileSync(path); return w.readUInt32LE(40) / 2 / w.readUInt32LE(24); };
+check(slowed.status === 0 && ok.status === 0 && seconds(slow) > 1.15 * seconds(out), `flags set the voice: --rate 0.6 takes ${slowed.status === 0 ? `${seconds(slow).toFixed(1)} s against ${seconds(out).toFixed(1)} s` : `exit ${slowed.status}: ${slowed.stderr.trim()}`}`);
+for (const bad of [["--speed", "2"], ["--rate", "fast"], ["--body", "robot"], ["--timing", "maybe"], ["--rate"]]) {
+  const r = speak(text, join(dir, "bad.wav"), ...bad);
+  check(r.status !== 0 && r.stderr.split("\n").filter(Boolean).length === 1, `"${bad.join(" ")}" is refused with one line (${r.stderr.trim().slice(0, 70)})`);
+}
+
 const missing = speak(join(dir, "no-such-reply.txt"), join(dir, "missing.wav"));
 const lines = missing.stderr.split("\n").filter(Boolean);
 check(missing.status !== 0 && lines.length === 1 && lines[0].startsWith("speak: "), `an unreadable input exits non-zero with one line on stderr (exit ${missing.status}: ${missing.stderr.trim()})`);

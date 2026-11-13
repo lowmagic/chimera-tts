@@ -200,7 +200,26 @@ tts:
       timeout: 600 # seconds without output; a long reply on a slow machine takes a while
 ```
 
-where `/srv/chimera` is a commit of `dist`. Hermes cleans the text before it hands it over
+where `/srv/chimera` is a commit of `dist`. The voice is the page's with its default settings; the
+page's sliders are flags on that command, anywhere on the line, and what you leave out stays at its
+default:
+
+| Flag | Default | The page's setting |
+| --- | --- | --- |
+| `--rate` | 0.85 | Speed |
+| `--pitch` | 1 | Pitch |
+| `--body` | male | Voice (`male`, `female`, `child`) |
+| `--plosives` | 1.5 | Harder p, t, k, b, d, g (1 to 2) |
+| `--voicing` | 1.5 | More voice in b, d, g, v, z (1 to 2) |
+| `--word-ends` | 1 | longer last syllable of each word (no slider on the page) |
+| `--timing` | on | Trained timing (`on` or `off`) |
+
+```yaml
+      command: node /srv/chimera/speak/speak.mjs --rate 0.8 --pitch 1.1 {text_path} {output_path}
+```
+
+Hermes reads the command for each reply, so a change takes effect on the next one. The same flags
+before `--serve` set what a served request gets when it doesn't say otherwise. Hermes cleans the text before it hands it over
 (Markdown, emoji and emphasis asterisks go; a mood tag stays) and converts the WAV as it needs.
 
 A speech server that says many replies keeps one running instead, so the engine, dictionary and
