@@ -1250,10 +1250,14 @@ function pitched(api, phrases, o) {
   const said = phrases.reduce((n, p) => n + p.words.length, 0);
   const emphasis = o.emphasis && (o.wordCount ?? said) === said ? o.emphasis : [];
   const pitch = { base: o.f0, emphasis, mood: o.mood };
-  if (o.model?.timed && o.timing !== false) {
+  const timed = !!o.model?.timed && o.timing !== false, wordEnds = o.wordEnds ?? 1;
+  if (timed || wordEnds !== 1) {
     const spans = layout(phrases, plan, counts).filter((ph) => ph.syllables.length);
-    const stretch = o.model.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words)));
-    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate);
+    const stretch = timed ? o.model.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words))) : [];
+    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate).map((p) => ({
+      ...p,
+      segments: p.segments.map((s, i) => s.dur !== undefined && (s.wordEnd || i === p.segments.length - 1) ? { ...s, dur: s.dur * wordEnds } : s)
+    }));
     plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
   }
   return { ...plan, gestures: o.model ? trainedPitch(phrases, plan, counts, o.model, pitch) : naturalPitch(phrases, plan, counts, pitch) };
@@ -1353,10 +1357,10 @@ var DEFAULTS = {
   reasoning: "off",
   systemPrompt: DEFAULT_PROMPT,
   body: "male",
-  rate: 1,
+  rate: 0.85,
   pitch: 1,
-  plosives: 1,
-  voicing: 1,
+  plosives: 1.5,
+  voicing: 1.5,
   handsFree: true,
   naturalPitch: true,
   trainedPitch: true,
@@ -1392,7 +1396,7 @@ async function load() {
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
   const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
-  return (text) => {
+  return (text, o = {}) => {
     const plans = [];
     let mood = "neutral";
     for (const sentence of replySentences(text)) {
@@ -1400,7 +1404,7 @@ async function load() {
       mood = s.mood ?? mood;
       const phrases = g2p.toPhrases(s.text);
       if (phrases.length)
-        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, timing: settings.trainedTiming, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
+        plans.push(planSpeech(engine, phrases, { body, rate: o.rate ?? settings.rate, f0, natural: settings.naturalPitch, model, timing: o.timing ?? settings.trainedTiming, plosives: o.plosives ?? settings.plosives, voicing: o.voicing ?? settings.voicing, wordEnds: o.wordEnds, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
     const x = new WebAssembly.Instance(chimeraModule(), {}).exports;
     const h = x.engine_new(FS);
@@ -1422,6 +1426,22 @@ async function load() {
   };
 }
 var oneLine = (e) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim();
+function overrides(o) {
+  if (o === undefined)
+    return {};
+  if (!o || typeof o !== "object")
+    throw new Error('"options" is an object, like {"rate": 0.9}');
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (k === "timing" && typeof v === "boolean")
+      out.timing = v;
+    else if ((k === "rate" || k === "plosives" || k === "voicing" || k === "wordEnds") && typeof v === "number" && v > 0 && v < 10)
+      out[k] = v;
+    else
+      throw new Error(`option ${JSON.stringify(k)}: ${JSON.stringify(v)} is not something this takes (rate, plosives, voicing, wordEnds: numbers; timing: true or false)`);
+  }
+  return out;
+}
 async function serve() {
   const say = await load();
   for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
@@ -1435,7 +1455,7 @@ async function serve() {
         id = req.id;
       if (typeof req?.id !== "string" || typeof req.text !== "string")
         throw new Error('a request is {"id": "<string>", "text": "<string>"}');
-      answer = { id, rate: FS, pcm: pcm16(say(req.text)).toString("base64") };
+      answer = { id, rate: FS, pcm: pcm16(say(req.text, overrides(req.options))).toString("base64") };
     } catch (e) {
       console.error(`speak: ${id ? `${id}: ` : ""}${oneLine(e)}`);
       answer = { id, error: oneLine(e) };
