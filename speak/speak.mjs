@@ -1368,6 +1368,7 @@ var DEFAULTS = {
 // tools/speak.ts
 var FS = 48000;
 var LEAD = 0.03;
+var TAIL = 0.15;
 var MAX_GESTURES = 4000;
 function pcm16(samples) {
   const buf = Buffer.alloc(2 * samples.length);
@@ -1406,8 +1407,8 @@ async function load() {
     x.engine_set_body(h, body.female, body.child);
     new Float64Array(x.memory.buffer, x.engine_values(h), 32).fill(NaN)[0] = f0;
     x.engine_set_source(h);
-    x.engine_set_gate(h, 1);
-    const lengths = plans.map((p) => Math.ceil((p.end + LEAD) * FS));
+    x.engine_set_gate(h, 0);
+    const lengths = plans.map((p, i) => Math.ceil((p.end + LEAD + (i === plans.length - 1 ? TAIL : 0)) * FS));
     const audio = new Float32Array(lengths.reduce((a, b) => a + b, 0) || Math.round(0.25 * FS));
     let at = 0;
     plans.forEach((plan, i) => {
