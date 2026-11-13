@@ -48,7 +48,8 @@ def test_resampling_keeps_the_length_in_seconds():
 def test_the_whole_measurement_with_a_stand_in_for_the_voice_and_the_listener(monkeypatch, tmp_path):
     said: dict[int, str] = {}
 
-    def say_all(jobs, workers, done=lambda: None):
+    def say_all(jobs, workers, done=lambda: None, options=None):
+        assert options == {"rate": 0.9}
         for n, (id_, text) in enumerate(jobs):
             said[n] = text
             done()
@@ -57,7 +58,8 @@ def test_the_whole_measurement_with_a_stand_in_for_the_voice_and_the_listener(mo
     monkeypatch.setattr(speak, "say_all", say_all)
     # hears everything but "ship", which it takes for "sip"
     listen = lambda clips: [said[int(round(float(c[len(c) // 2])))].replace("ship", "sip") for c in clips]
-    report = measure(["cat", "ship", "tree"], CMU, listen, batch=4, audio_dir=tmp_path / "missed")
+    report = measure(["cat", "ship", "tree"], CMU, listen, batch=4, audio_dir=tmp_path / "missed", options={"rate": 0.9})
+    assert report["settings"] == {"rate": 0.9}
     assert report["missed"] == ["ship"]
     assert report["heard"] == pytest.approx(66.7) and report["by_carrier"] == [pytest.approx(66.7)] * 2
     assert report["words"]["ship"]["ok"] == [False, False] and report["words"]["cat"]["ok"] == [True, True]
@@ -71,3 +73,24 @@ def test_the_real_speech_command_says_what_it_is_asked():
     out = list(speak.say_all([("a", "Say cat again."), ("b", "The word is cat."), ("c", "Say tree again.")], workers=2))
     assert sorted(i for i, _, _ in out) == ["a", "b", "c"]
     assert all(rate == 48000 and 0.5 < len(pcm) / rate < 3 and np.abs(pcm).max() > 0.01 for _, rate, pcm in out)
+
+
+@pytest.mark.skipif(not speak.SPEAK.exists(), reason="needs `bun run build`")
+def test_settings_reach_the_speech_command():
+    say = lambda options: next(iter(speak.say_all([("a", "Say gold again.")], 1, options=options)))[2]
+    plain, slow, held = say(None), say({"rate": 0.8}), say({"wordEnds": 1.5})
+    assert len(slow) > 1.15 * len(plain) and len(held) > 1.05 * len(plain)
+    with pytest.raises(RuntimeError, match="volume"):
+        say({"volume": 2})
+
+
+def test_a_sweep_counts_what_each_setting_gains_and_loses_against_the_defaults():
+    from clarity import sweep
+
+    r = lambda oks, **kw: {"heard": 0.0, "by_carrier": [0.0, 0.0], "carriers": list(score.CARRIERS), "words": {w: {"ok": ok} for w, ok in oks.items()}, **kw}
+    reports = {"defaults": r({"cat": [True, False], "ship": [False, False]}), "slower": r({"cat": [False, True], "ship": [True, True]}, settings={"rate": 0.8})}
+    rows = sweep.table(reports)
+    assert (rows[0]["gained"], rows[0]["lost"]) == (0, 0)
+    assert (rows[1]["gained"], rows[1]["lost"], rows[1]["settings"]) == (3, 1, {"rate": 0.8})
+    assert "slower" in sweep.show(rows, list(score.CARRIERS))
+    assert all(set(s) <= {"rate", "plosives", "voicing", "wordEnds", "timing"} for s in sweep.SETTINGS.values())

@@ -33,6 +33,9 @@ export interface SpeechOptions {
   wordCount?: number;
   mood?: Mood;
   /** harder stops and more voice under voiced consonants (`articulation.ts`): 1, Chimera's own, to 2 */
+  /** how many times its planned length each word's last sound is held (1: as planned). People mark
+   *  the end of a word by lengthening it; Chimera runs words together. Experimental. */
+  wordEnds?: number;
   plosives?: number;
   voicing?: number;
 }
@@ -53,11 +56,16 @@ function pitched(api: PlannerApi, phrases: Phrase[], o: SpeechOptions): Plan {
   const said = phrases.reduce((n, p) => n + p.words.length, 0);
   const emphasis = o.emphasis && (o.wordCount ?? said) === said ? o.emphasis : [];
   const pitch = { base: o.f0, emphasis, mood: o.mood };
-  if (o.model?.timed && o.timing !== false) {
-    // the model's syllable lengths: read off Chimera's own plan, stretched, and planned again
+  const timed = !!o.model?.timed && o.timing !== false, wordEnds = o.wordEnds ?? 1;
+  if (timed || wordEnds !== 1) {
+    // lengths read off Chimera's own plan, changed, and planned again: each syllable stretched by
+    // the model's answer, and each word's last sound by `wordEnds`
     const spans = layout(phrases, plan, counts).filter((ph) => ph.syllables.length);
-    const stretch = o.model.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words)));
-    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate);
+    const stretch = timed ? o.model!.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words))) : [];
+    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate).map((p) => ({
+      ...p,
+      segments: p.segments.map((s, i) => (s.dur !== undefined && (s.wordEnd || i === p.segments.length - 1) ? { ...s, dur: s.dur * wordEnds } : s)),
+    }));
     plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
   }
   return { ...plan, gestures: o.model ? trainedPitch(phrases, plan, counts, o.model, pitch) : naturalPitch(phrases, plan, counts, pitch) };
