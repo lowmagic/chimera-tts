@@ -76,7 +76,7 @@ async function load(): Promise<(text: string) => Float32Array> {
       const s = toSayable(sentence);
       mood = s.mood ?? mood; // a tag sets the mood for the sentences after it too
       const phrases = g2p.toPhrases(s.text);
-      if (phrases.length) plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
+      if (phrases.length) plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, timing: settings.trainedTiming, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
 
     // the engine as the AudioWorklet runs it: its own instance, told the body, the pitch and the plans

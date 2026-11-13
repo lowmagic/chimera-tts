@@ -5,7 +5,8 @@
  *
  *   bun tools/render.ts <outdir> [--model public/models/prosody.json] [male|female|child] "A sentence. *Marked* up like a reply."...
  *
- * Writes <n>-classic.wav, <n>-natural.wav and <n>-trained.wav per text, and prints each one's pitch range.
+ * Writes <n>-classic.wav, <n>-natural.wav, <n>-trained.wav (the model's pitch) and, if the model has
+ * syllable lengths, <n>-timed.wav (its pitch and timing) per text, and prints each one's pitch range.
  * Needs the engine built (`bun run prepare-chimera`).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -51,7 +52,7 @@ function wav(samples: Float32Array): Buffer {
   return buf;
 }
 
-type Mode = "classic" | "natural" | "trained";
+type Mode = "classic" | "natural" | "trained" | "timed";
 
 /** One reply, sentence by sentence as the page queues them; returns the audio and the voiced pitches. */
 function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] } {
@@ -67,7 +68,7 @@ function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] }
     mood = s.mood ?? mood;
     const phrases = g2p.toPhrases(s.text);
     if (!phrases.length) continue;
-    const plan = planSpeech(engine, phrases, { body, rate: 1, f0, natural: mode !== "classic", model: mode === "trained" ? model : null, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood });
+    const plan = planSpeech(engine, phrases, { body, rate: 1, f0, natural: mode !== "classic", model: mode === "trained" || mode === "timed" ? model : null, timing: mode === "timed", emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood });
     voice.schedule(plan.gestures, 0.03, true);
     // 10 ms at a time, reading the pitch where the voice is voiced
     for (let n = Math.ceil((plan.end + 0.03) * FS); n > 0; n -= 480) {
@@ -84,7 +85,7 @@ function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] }
 
 const semitones = (a: number, b: number) => 12 * Math.log2(a / b);
 rest.forEach((text, i) => {
-  for (const mode of ["classic", "natural", ...(model ? ["trained"] : [])] as Mode[]) {
+  for (const mode of ["classic", "natural", ...(model ? ["trained"] : []), ...(model?.timed ? ["timed"] : [])] as Mode[]) {
     const { audio, f0 } = render(text, mode);
     const name = `${String(i + 1).padStart(2, "0")}-${mode}.wav`;
     writeFileSync(join(outdir, name), wav(audio));

@@ -12,19 +12,22 @@ from .text import CATEGORICAL, N_NUMERIC, Syllable
 
 UNK = 0  # the word table's row for every word not in the vocabulary
 SMALL_DIM = 4  # embedding size of the small categorical features
+# the length output's unit, in natural-log: sized so lengths vary about as much as pitch does in semitones
+DUR_UNIT = 0.1
 
 
 class PitchModel(nn.Module):
-    def __init__(self, n_words: int, hidden: int = 64, word_dim: int = 24):
+    def __init__(self, n_words: int, hidden: int = 64, word_dim: int = 24, n_out: int = 2):
         super().__init__()
-        self.config = {"n_words": n_words, "hidden": hidden, "word_dim": word_dim}
+        # n_out 3 adds each syllable's length (the log of real over Chimera's, in DUR_UNITs)
+        self.config = {"n_words": n_words, "hidden": hidden, "word_dim": word_dim, "n_out": n_out}
         self.embeddings = nn.ModuleList(
             nn.Embedding(n_words if size is None else size, word_dim if size is None else SMALL_DIM) for _, size in CATEGORICAL
         )
         width = sum(e.embedding_dim for e in self.embeddings) + N_NUMERIC
         self.inp = nn.Linear(width, hidden)
         self.gru = nn.GRU(hidden, hidden, batch_first=True, bidirectional=True)
-        self.out = nn.Linear(2 * hidden, 2)
+        self.out = nn.Linear(2 * hidden, n_out)
 
     def forward(self, cat: torch.Tensor, num: torch.Tensor, lengths: torch.Tensor | None = None) -> torch.Tensor:
         """cat: batch × syllables × len(CATEGORICAL) ids; num: batch × syllables × N_NUMERIC."""

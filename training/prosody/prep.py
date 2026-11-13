@@ -16,9 +16,15 @@ Syllable times come from, in order of preference:
 A corpus with several speakers has a `speakers.json` ({id: speaker}) beside metadata.csv. Pitch
 is learned relative to each speaker's own usual pitch, so the speaker must be known.
 
-One line of JSON is written per utterance kept:
+With `--textgrids` and `--timing file.json` (Chimera's own length for every syllable of every
+utterance, written by `bun tools/timing.ts`), each syllable's real length is recorded against
+Chimera's, and the model can learn timing too.
+
+One line of JSON is written per utterance kept ("dur" only with --timing: the log of real length
+over Chimera's per syllable, null where it couldn't be measured):
   {"id", "phrases": [{"words": [[text, [stress per syllable]]...], "end"}], "y": [[early, late]
-   per syllable, semitones above 1 Hz], "ok": [voiced enough to trust, per syllable], "speaker"}
+   per syllable, semitones above 1 Hz], "ok": [voiced enough to trust, per syllable], "speaker",
+   "dur": [...]}
 """
 from __future__ import annotations
 
@@ -29,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .align import textgrid_nuclei
+from .align import textgrid_nuclei, textgrid_rhythm
 from .f0 import pitch_track, syllable_targets
 from .text import Phrase, load_cmudict, syllable_phones, to_utterance
 
@@ -58,6 +64,14 @@ def utterance_json(utt: list[Phrase]) -> list[dict]:
     return [{"words": [[w.text, w.stresses] for w in p.words], "end": p.end} for p in utt]
 
 
+def relative_lengths(real: list[float], chimera: list[float] | None, n: int) -> list[float | None] | None:
+    """log(real / Chimera's) per syllable, or None if either counts its syllables differently.
+    A syllable too short or too long to be a real measurement is None."""
+    if chimera is None or len(real) != n or len(chimera) != n:
+        return None
+    return [round(float(np.log(r / c)), 4) if 0.02 <= r <= 1.5 and c > 0.01 else None for r, c in zip(real, chimera)]
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ljspeech", type=Path, required=True, help="corpus folder (metadata.csv and wavs/)")
@@ -65,6 +79,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--textgrids", type=Path, help="folder of MFA TextGrids to take syllable times from")
     ap.add_argument("--tier", default="phones", help="the TextGrids' phone tier")
     ap.add_argument("--alignments", type=Path, help="syllable times to use instead of aligning")
+    ap.add_argument("--timing", type=Path, help="Chimera's syllable lengths (bun tools/timing.ts), to learn timing against; needs --textgrids")
     ap.add_argument("--limit", type=int, help="only the first N utterances (for a quick try)")
     ap.add_argument("--device", default=None, help="cuda or cpu for the aligner (default: cuda if there is one)")
     ap.add_argument("--pitch-floor", type=float, default=70.0, help="lowest pitch to look for, Hz (a low male voice: 50)")
@@ -83,6 +98,10 @@ def main(argv: list[str] | None = None) -> None:
     grids = {p.stem: p for p in args.textgrids.rglob("*.TextGrid")} if args.textgrids else None
     if grids is not None:
         print(f"{len(grids)} TextGrids under {args.textgrids}")
+    if args.timing and grids is None:
+        raise SystemExit("--timing needs --textgrids: only real phoneme alignments say how long a syllable was")
+    timing = json.loads(args.timing.read_text()) if args.timing else None
+    timed = 0
     aligner = None
     if given is None and grids is None:
         import torch
@@ -111,12 +130,16 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             if wave.ndim > 1:
                 wave = wave.mean(axis=1)
+            dur = None
             if grids is not None:
                 if uid not in grids:
                     dropped["no TextGrid"] += 1
                     continue
                 try:
-                    spans = textgrid_nuclei(grids[uid].read_text(encoding="utf-8"), args.tier)
+                    grid = grids[uid].read_text(encoding="utf-8")
+                    spans = textgrid_nuclei(grid, args.tier)
+                    if timing is not None:
+                        dur = relative_lengths(textgrid_rhythm(grid, args.tier), timing.get(uid), n)
                 except ValueError:
                     dropped["TextGrid has no phone tier"] += 1
                     continue
@@ -141,11 +164,17 @@ def main(argv: list[str] | None = None) -> None:
             if sum(ok) < args.min_voiced * n:
                 dropped["too little of it voiced"] += 1
                 continue
-            out.write(json.dumps({"id": uid, "phrases": utterance_json(utt), "y": [[round(v, 3) for v in t] for t in y], "ok": ok, "speaker": str(speakers.get(uid, ""))}) + "\n")
+            row = {"id": uid, "phrases": utterance_json(utt), "y": [[round(v, 3) for v in t] for t in y], "ok": ok, "speaker": str(speakers.get(uid, ""))}
+            if dur is not None:
+                row["dur"] = dur
+                timed += 1
+            out.write(json.dumps(row) + "\n")
             kept += 1
             syllables += n
 
     print(f"kept {kept} of {len(rows)} utterances ({syllables} syllables) → {args.out}")
+    if timing is not None:
+        print(f"  {timed} of them with syllable lengths against Chimera's (the rest: Chimera split them into a different number of syllables)")
     for why, count in dropped.most_common():
         print(f"  dropped {count}: {why}")
     if kept == 0:

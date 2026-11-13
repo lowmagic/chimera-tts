@@ -7,7 +7,7 @@ import soundfile as sf
 
 from prosody import dailytalk, prep
 from prosody import train as train_mod
-from prosody.align import textgrid_nuclei, textgrid_tier
+from prosody.align import textgrid_nuclei, textgrid_rhythm, textgrid_tier
 
 # "hello there": HH AH0 L OW1 | DH EH1 R, with a pause between
 PHONES = [(0.0, 0.1, ""), (0.1, 0.15, "HH"), (0.15, 0.25, "AH0"), (0.25, 0.3, "L"), (0.3, 0.5, "OW1"), (0.5, 0.6, "sp"), (0.6, 0.65, "DH"), (0.65, 0.85, "EH1"), (0.85, 0.95, "R"), (0.95, 1.2, "")]
@@ -80,3 +80,45 @@ def test_a_textgrid_that_disagrees_with_the_words_is_dropped(tmp_path):
     out = tmp_path / "set.jsonl"
     prep.main(["--ljspeech", str(lj), "--textgrids", str(tmp_path / "grids"), "--out", str(out)])
     assert [json.loads(line)["id"] for line in out.read_text().splitlines()] == ["a"]
+
+
+def test_syllable_lengths_run_vowel_to_vowel_without_the_pauses():
+    # AH0 0.15→0.25 + L; OW1 0.3→0.5, the pause skipped, + DH; EH1 0.65→0.85 + R
+    assert textgrid_rhythm(long_grid()) == pytest.approx([0.15, 0.25, 0.3])
+    assert textgrid_rhythm(short_grid()) == pytest.approx([0.15, 0.25, 0.3])
+
+
+def test_lengths_are_relative_to_chimeras_and_need_matching_syllables():
+    assert prep.relative_lengths([0.2, 0.1, 0.005], [0.1, 0.1, 0.1], 3) == [pytest.approx(0.6931), 0.0, None]
+    assert prep.relative_lengths([0.2, 0.1], [0.1, 0.1, 0.1], 3) is None
+    assert prep.relative_lengths([0.2, 0.1, 0.1], None, 3) is None
+
+
+def test_prep_records_lengths_against_chimeras_where_the_syllables_match(tmp_path):
+    lj = tmp_path / "lj"
+    (lj / "wavs").mkdir(parents=True)
+    for name in "abc":
+        sf.write(lj / "wavs" / f"{name}.wav", buzz(120.0), 16000)
+        (tmp_path / f"{name}.TextGrid").write_text(long_grid())
+    (lj / "metadata.csv").write_text("".join(f"{n}|Hello there.|Hello there.\n" for n in "abc"))
+    # Chimera's lengths: a has them, b's count is off, c has none
+    (tmp_path / "chimera.json").write_text(json.dumps({"a": [0.15, 0.125, 0.6], "b": [0.1, 0.1]}))
+    out = tmp_path / "set.jsonl"
+    prep.main(["--ljspeech", str(lj), "--textgrids", str(tmp_path), "--timing", str(tmp_path / "chimera.json"), "--out", str(out)])
+    rows = {r["id"]: r for r in map(json.loads, out.read_text().splitlines())}
+    assert rows["a"]["dur"] == pytest.approx([0.0, 0.6931, -0.6931], abs=1e-3)
+    assert "dur" not in rows["b"] and "dur" not in rows["c"] and len(rows) == 3  # kept for pitch all the same
+    # and training takes the set: lengths around the speaker's pace, trusted only where measured
+    loaded = train_mod.load(out)
+    paces = train_mod.speaker_paces(loaded)
+    assert paces == {"set:": pytest.approx(0.0)}
+    items = {r["id"]: t for r, t in zip(loaded, train_mod.tensors(loaded, {"": 0}, train_mod.speaker_medians(loaded), paces))}
+    assert items["a"][2][:, 2].tolist() == pytest.approx([0.0, 6.931, -6.931], abs=1e-2) and items["a"][3][:, 2].all()
+    assert not items["b"][3][:, 2].any() and items["b"][3][:, :2].all()
+
+
+def test_timing_without_textgrids_is_refused(tmp_path):
+    (tmp_path / "metadata.csv").write_text("a|Hello.|Hello.\n")
+    (tmp_path / "t.json").write_text("{}")
+    with pytest.raises(SystemExit, match="--textgrids"):
+        prep.main(["--ljspeech", str(tmp_path), "--alignments", str(tmp_path / "t.json"), "--timing", str(tmp_path / "t.json")])

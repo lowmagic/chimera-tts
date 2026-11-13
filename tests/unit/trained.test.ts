@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Phrase, Plan } from "../../vendor/chimera/src/wasm/types.ts";
-import { PitchModel, featurize, trainedPitch, utteranceOf, type Features, type ModelFile, type UttPhrase } from "../../src/trained.ts";
+import { PitchModel, STRETCH, featurize, trainedPitch, utteranceOf, type Features, type ModelFile, type UttPhrase } from "../../src/trained.ts";
 import { layout } from "../../src/prosody.ts";
+import { planSpeech } from "../../src/plan.ts";
+import { stretched, syllableTiming } from "../../src/timing.ts";
 
 const fixture = (name: string) => new URL(`../fixtures/${name}`, import.meta.url);
 const meta: ModelFile = JSON.parse(readFileSync(fixture("prosody-tiny.json"), "utf8"));
@@ -79,4 +81,53 @@ test("the plan's pitch is replaced by the model's, two targets to a long vowel, 
   const loud = trainedPitch(phrases, plan, counts, model, { base: 100, emphasis: [2] }).filter((g) => g.label === "pitch");
   expect(loud[4].targets.f0!).toBeGreaterThan(pitch[4].targets.f0!);
   expect(loud[0].targets.f0!).toBeCloseTo(pitch[0].targets.f0!, 6);
+});
+
+const timedMeta: ModelFile = JSON.parse(readFileSync(fixture("prosody-tiny-timed.json"), "utf8"));
+const timedBin = () => new Uint8Array(readFileSync(fixture("prosody-tiny-timed.bin"))).buffer;
+
+test("a model with syllable lengths gives them as stretches of Chimera's own; one without gives 1", () => {
+  const timed = PitchModel.from(timedMeta, timedBin()), plain = PitchModel.from(meta, bin());
+  expect(timed.timed).toBe(true);
+  expect(plain.timed).toBe(false);
+  const raw = timed.raw(timedMeta.check.phrases);
+  raw.forEach((row, i) => row.forEach((v, j) => expect(v).toBeCloseTo(timedMeta.check.y[i][j], 3)));
+  expect(raw[0]).toHaveLength(3);
+  const d = timedMeta.duration!;
+  expect(timed.stretch(timedMeta.check.phrases)).toEqual(raw.map((y) => Math.max(STRETCH[0], Math.min(STRETCH[1], Math.exp(y[2] * d.unit * d.scale)))));
+  expect(timed.predict(timedMeta.check.phrases)[0]).toHaveLength(2);
+  expect(plain.stretch(meta.check.phrases)).toEqual(meta.check.y.map(() => 1));
+});
+
+test("syllables run from vowel to vowel, pauses left out, and the first takes the consonants before it", () => {
+  const { phrases, plan, counts } = fake(); // the bad dog, | sat?  with 0.1 s a letter
+  const t = syllableTiming(phrases, plan, counts);
+  // e | a d d | o g s | a t   (th before the first vowel is counted in no syllable's length)
+  t.lengths.forEach((v, i) => expect(v).toBeCloseTo([0.2, 0.3, 0.3, 0.2][i], 9));
+  expect(t.segments.map((p) => p.map((s) => s.syllable))).toEqual([[0, 0, 0, 0, 1, 1, 1, 2, 2], [2, 3, 3]]);
+  const again = stretched(phrases, t, [1, 2, 1, 0.5], 1.25);
+  again[0].segments.forEach((s, i) => expect(s.dur!).toBeCloseTo(0.125 * (i >= 4 && i < 7 ? 2 : 1), 9));
+  again[1].segments.forEach((s, i) => expect(s.dur!).toBeCloseTo(0.125 * (i === 0 ? 1 : 0.5), 9));
+  expect(phrases[0].segments[0].dur).toBeUndefined();
+});
+
+test("with a timed model the phrases are planned twice, the second time with its lengths; the switch turns that off", () => {
+  const { phrases, plan, counts } = fake();
+  const asked: (number | undefined)[][] = [];
+  const api = {
+    planPhrases: (ps: Phrase[]) => (asked.push(ps.flatMap((p) => p.segments.map((s) => s.dur))), plan),
+    plannedCounts: () => counts,
+  };
+  const o = { body: { female: 0, child: 0 }, rate: 1, f0: 100, natural: true };
+  const timed = PitchModel.from(timedMeta, timedBin());
+  planSpeech(api, phrases, { ...o, model: timed });
+  expect(asked).toHaveLength(2);
+  expect(asked[0].every((d) => d === undefined)).toBe(true);
+  const stretch = timed.stretch(utteranceOf(layout(phrases, plan, counts), phrases.flatMap((p) => p.words)));
+  expect(asked[1][4]!).toBeCloseTo(0.1 * stretch[1], 9);
+  asked.length = 0;
+  planSpeech(api, phrases, { ...o, model: timed, timing: false });
+  planSpeech(api, phrases, { ...o, model: PitchModel.from(meta, bin()) });
+  expect(asked).toHaveLength(2);
+  expect(asked.flat().every((d) => d === undefined)).toBe(true);
 });

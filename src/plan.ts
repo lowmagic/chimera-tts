@@ -6,8 +6,9 @@
 import type { BodyMix, Phrase, Plan } from "../vendor/chimera/src/wasm/types.ts";
 import { MOODS, type Mood } from "./markup.ts";
 import { articulate } from "./articulation.ts";
-import { naturalPitch } from "./prosody.ts";
-import { trainedPitch, type PitchModel } from "./trained.ts";
+import { layout, naturalPitch } from "./prosody.ts";
+import { stretched, syllableTiming } from "./timing.ts";
+import { trainedPitch, utteranceOf, type PitchModel } from "./trained.ts";
 
 /** the parts of Chimera's engine facade this needs (imported only after the wasm has loaded) */
 export interface PlannerApi {
@@ -25,6 +26,8 @@ export interface SpeechOptions {
   natural: boolean;
   /** with natural pitch: a trained model to take the contour from, instead of the rules */
   model?: PitchModel | null;
+  /** with a model that has them: its syllable lengths too (`timing.ts`); on unless false */
+  timing?: boolean;
   emphasis?: readonly number[];
   /** how many words the emphasis indices were counted over */
   wordCount?: number;
@@ -42,12 +45,20 @@ export function planSpeech(api: PlannerApi, phrases: Phrase[], o: SpeechOptions)
 function pitched(api: PlannerApi, phrases: Phrase[], o: SpeechOptions): Plan {
   if (!o.natural) return api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
   const mood = MOODS[o.mood ?? "neutral"];
-  const plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate * mood.rate, f0: o.f0 });
+  const rate = o.rate * mood.rate;
+  let plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
   const counts = api.plannedCounts(phrases.flatMap((p) => p.segments.map((s) => s.ipa)));
   // the emphasis marks count words as the text was split here; if the engine split it another
   // way (it shouldn't), they would land on the wrong words, so they are dropped
   const said = phrases.reduce((n, p) => n + p.words.length, 0);
   const emphasis = o.emphasis && (o.wordCount ?? said) === said ? o.emphasis : [];
   const pitch = { base: o.f0, emphasis, mood: o.mood };
+  if (o.model?.timed && o.timing !== false) {
+    // the model's syllable lengths: read off Chimera's own plan, stretched, and planned again
+    const spans = layout(phrases, plan, counts).filter((ph) => ph.syllables.length);
+    const stretch = o.model.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words)));
+    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate);
+    plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
+  }
   return { ...plan, gestures: o.model ? trainedPitch(phrases, plan, counts, o.model, pitch) : naturalPitch(phrases, plan, counts, pitch) };
 }

@@ -5,7 +5,8 @@
 - tests/fixtures/prosody-features.json: sentences and the features this code computes for them;
   tests/unit/trained.test.ts computes them again in TypeScript.
 - tests/fixtures/prosody-tiny.{json,bin}: a small model with random weights and PyTorch's answer
-  for one utterance; the same test runs the browser's arithmetic against it.
+  for one utterance; the same test runs the browser's arithmetic against it. And
+  prosody-tiny-timed, the same with syllable lengths.
 
 Run it again, and commit the result, whenever text.py's features or the model's layers change.
 """
@@ -49,6 +50,8 @@ def main() -> None:
     words = ["", "that", "you", "know", "really"]
     model = PitchModel(len(words), hidden=6, word_dim=5)
     export(model, words, out, "prosody-tiny", scale=1.25)
+    # the same with a third output: syllable lengths
+    export(PitchModel(len(words), hidden=6, word_dim=5, n_out=3), words, out, "prosody-tiny-timed", scale=1.25, dur_scale=1.2)
     print(f"wrote {out}/prosody-features.json and prosody-tiny.json/.bin")
 
 

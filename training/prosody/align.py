@@ -153,3 +153,23 @@ def textgrid_nuclei(text: str, tier: str = "phones") -> list[tuple[float, float]
     """Each vowel's (start, end) from a TextGrid's phone tier (ARPAbet labels, as MFA's
     english_us_arpa models and the LibriSpeech lexicon give: "AH0", "IY1")."""
     return [(a, b) for a, b, label in textgrid_tier(text, tier) if is_vowel(label.strip().upper())]
+
+
+_CONSONANTS = frozenset("B CH D DH F G HH JH K L M N NG P R S SH T TH V W Y Z ZH".split())
+
+
+def textgrid_rhythm(text: str, tier: str = "phones") -> list[float]:
+    """Each syllable's length in a TextGrid's phone tier: the time spent on phones from its
+    vowel's start to the next vowel's start (or the end), silences left out. The same measure
+    `syllableTiming` in src/timing.ts takes of a Chimera plan."""
+    out: list[float] = []
+    for a, b, label in textgrid_tier(text, tier):
+        label = label.strip().upper()
+        vowel = is_vowel(label)
+        if not vowel and label not in _CONSONANTS:
+            continue  # a pause, noise or an unknown word
+        if vowel:
+            out.append(0.0)
+        if out:
+            out[-1] += b - a
+    return out
