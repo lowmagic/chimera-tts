@@ -44,7 +44,7 @@ for (const text of texts) {
   const plan = planSpeech(engine, phrases, { body, rate: 1, f0, natural: true, plosives: plosive, voicing });
   const voice = new WasmVoice(FS);
   voice.setSource({ f0 });
-  voice.setGate(1);
+  voice.setGate(0); // shut, as on the page: the plan brings its own breath
   voice.schedule(plan.gestures, LEAD, true);
   const audio = new Float32Array(Math.ceil((plan.end + LEAD + 0.1) * FS));
   for (let at = 0; at < audio.length; at += 480) audio.set(voice.render(Math.min(480, audio.length - at)), at);

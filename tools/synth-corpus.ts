@@ -85,7 +85,7 @@ for (let n = 0; n < count; n++) {
   const counts = engine.plannedCounts(phrases.flatMap((p) => p.segments.map((s) => s.ipa)));
   const voice = new WasmVoice(FS);
   voice.setSource({ f0 });
-  voice.setGate(1);
+  voice.setGate(0); // shut, as on the page: the plan brings its own breath
   voice.schedule(plan.gestures, LEAD, true);
   const audio = voice.render(Math.ceil((plan.end + LEAD + 0.1) * FS));
   writeFileSync(join(outdir, "wavs", `${id}.wav`), wav(audio));

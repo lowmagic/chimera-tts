@@ -55,10 +55,11 @@ def measure(words: list[str], cmudict: dict[str, list[str]], transcribe: Callabl
 
     results: dict[str, dict] = {}
     for i, w in enumerate(words):
-        r = {"heard": 0, "of": len(score.CARRIERS), "as": [], "transcripts": []}
+        r = {"heard": 0, "of": len(score.CARRIERS), "ok": [], "as": [], "transcripts": []}
         for c, carrier in enumerate(score.CARRIERS):
             ok, what = score.heard_as(w, carrier, heard[f"{i}:{c}"], cmudict)
             r["heard"] += ok
+            r["ok"].append(ok)
             r["transcripts"].append(heard[f"{i}:{c}"])
             if not ok:
                 r["as"].append(what)
@@ -72,6 +73,8 @@ def measure(words: list[str], cmudict: dict[str, list[str]], transcribe: Callabl
     return {
         "carriers": list(score.CARRIERS),
         "heard": round(100 * sum(r["heard"] for r in results.values()) / max(1, n), 1),
+        # a carrier far below the others is itself being misheard: judge by the better one
+        "by_carrier": [round(100 * sum(r["ok"][c] for r in results.values()) / max(1, len(results)), 1) for c in range(len(score.CARRIERS))],
         "missed": [w for w in words if results[w]["heard"] == 0],
         "sounds": score.by_sound(results, cmudict),
         "confusions": [list(c) for c in score.confusions(results)],
@@ -123,6 +126,8 @@ def main() -> None:
     (a.out / "missed.txt").write_text("".join(w + "\n" for w in report["missed"]))
 
     print(f"\nheard {report['heard']} % of the sayings; {len(report['missed'])} of {len(words)} words never heard ({a.out / 'missed.txt'})")
+    for carrier, share in zip(report["carriers"], report["by_carrier"]):
+        print(f"  in {carrier.format('…')!r}: {share} %")
     print("\nhardest sounds (share heard of the words that have the sound there):")
     for r in report["sounds"][:15]:
         print(f"  {r['sound']:3s} {r['where']:5s} {r['heard']:5.1f} %  of {r['words']} words")

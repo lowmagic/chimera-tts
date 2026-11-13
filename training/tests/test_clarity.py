@@ -15,6 +15,7 @@ SAY, WORD = score.CARRIERS
 
 def test_a_word_is_heard_as_itself_or_a_homophone_wherever_it_lands():
     assert score.heard_as("two", SAY, "Say 2 again.", CMU) == (True, "two")
+    assert score.heard_as("hundred", WORD, "The word is 100.", CMU) == (True, "hundred")
     assert score.heard_as("two", SAY, "Say too again", CMU) == (True, "two")
     assert score.heard_as("cat", WORD, "The word is, cat!", CMU) == (True, "cat")
     assert score.heard_as("don't", SAY, "Say don’t again.", CMU) == (True, "don't")
@@ -58,7 +59,8 @@ def test_the_whole_measurement_with_a_stand_in_for_the_voice_and_the_listener(mo
     listen = lambda clips: [said[int(round(float(c[len(c) // 2])))].replace("ship", "sip") for c in clips]
     report = measure(["cat", "ship", "tree"], CMU, listen, batch=4, audio_dir=tmp_path / "missed")
     assert report["missed"] == ["ship"]
-    assert report["heard"] == pytest.approx(66.7)
+    assert report["heard"] == pytest.approx(66.7) and report["by_carrier"] == [pytest.approx(66.7)] * 2
+    assert report["words"]["ship"]["ok"] == [False, False] and report["words"]["cat"]["ok"] == [True, True]
     assert report["words"]["ship"]["as"] == ["sip", "sip"]
     assert report["confusions"][0] == ["ship", "sip", 2]
     assert [p.name for p in (tmp_path / "missed").iterdir()] == ["ship.wav"]
