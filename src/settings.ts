@@ -66,10 +66,11 @@ export const DEFAULTS: Settings = {
   reasoning: "off",
   systemPrompt: DEFAULT_PROMPT,
   body: "male",
-  // measured, not guessed (training/README.md, "Which words come out unclear"): Whisper makes out
-  // 48 % of words at Chimera's own speed and 53 % at 0.85, nearly all of the gain in words in the
-  // middle of a sentence; the two consonant sliders at 1.5 add a point or two, and nothing at 2
-  rate: 0.85,
+  // by ear: a little under Chimera's own speed. Slower is easier to make out (training/README.md,
+  // "Which words come out unclear": Whisper gets 48 % of words at 1 and 53 % at 0.85, nearly all of
+  // the gain in the middle of a sentence) but drags; the two consonant sliders at 1.5 add a point
+  // or two, and nothing at 2
+  rate: 0.95,
   pitch: 1,
   plosives: 1.5,
   voicing: 1.5,

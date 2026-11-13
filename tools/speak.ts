@@ -10,7 +10,7 @@
  * it prints one line to stderr and exits 1. The page's voice sliders are flags, anywhere on the
  * line, for either way of running it (what isn't given is the page's default):
  *
- *   --rate 0.85  --pitch 1  --body male  --plosives 1.5  --voicing 1.5  --word-ends 1  --timing on
+ *   --rate 0.95  --pitch 1  --body male  --plosives 1.5  --voicing 1.5  --word-ends 1  --timing on
  *
  * A speech server keeps it running instead:
  *

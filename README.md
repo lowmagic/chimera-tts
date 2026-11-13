@@ -206,7 +206,7 @@ default:
 
 | Flag | Default | The page's setting |
 | --- | --- | --- |
-| `--rate` | 0.85 | Speed |
+| `--rate` | 0.95 | Speed |
 | `--pitch` | 1 | Pitch |
 | `--body` | male | Voice (`male`, `female`, `child`) |
 | `--plosives` | 1.5 | Harder p, t, k, b, d, g (1 to 2) |
