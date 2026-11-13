@@ -1357,7 +1357,7 @@ var DEFAULTS = {
   reasoning: "off",
   systemPrompt: DEFAULT_PROMPT,
   body: "male",
-  rate: 0.85,
+  rate: 0.95,
   pitch: 1,
   plosives: 1.5,
   voicing: 1.5,
@@ -1385,7 +1385,7 @@ function wav(samples) {
   head.writeUInt32LE(FS, 24), head.writeUInt32LE(2 * FS, 28), head.writeUInt16LE(2, 32), head.writeUInt16LE(16, 34), head.write("data", 36), head.writeUInt32LE(2 * samples.length, 40);
   return Buffer.concat([head, pcm16(samples)]);
 }
-async function load() {
+async function load(voice = {}) {
   const asset = (name) => readFileSync(new URL(name, import.meta.url));
   await initChimera(asset("chimera.wasm"));
   const engine = await Promise.resolve().then(() => (init_engine(), exports_engine));
@@ -1395,8 +1395,9 @@ async function load() {
   setKnownWords((w) => known.has(w));
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
-  const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
-  return (text, o = {}) => {
+  const body = PRESETS[voice.body ?? settings.body], f0 = defaultF0(body) * (voice.pitch ?? settings.pitch);
+  return (text, request = {}) => {
+    const o = { ...voice, ...request };
     const plans = [];
     let mood = "neutral";
     for (const sentence of replySentences(text)) {
@@ -1442,8 +1443,39 @@ function overrides(o) {
   }
   return out;
 }
-async function serve() {
-  const say = await load();
+var FLAGS = { "--rate": "rate", "--pitch": "pitch", "--plosives": "plosives", "--voicing": "voicing", "--word-ends": "wordEnds" };
+var USAGE = "usage: node speak.mjs [flags] <text file> <out.wav> | node speak.mjs [flags] --serve (flags: --rate, --pitch, --plosives, --voicing, --word-ends <number>; --body <name>; --timing on|off)";
+function flags(args) {
+  const voice = {}, rest = [];
+  for (let i = 0;i < args.length; i++) {
+    const [name, inline] = args[i].split(/=(.*)/s, 2);
+    if (!name.startsWith("--") || name === "--serve") {
+      rest.push(args[i]);
+      continue;
+    }
+    const value = inline ?? args[++i];
+    if (value === undefined)
+      throw new Error(`${name} needs a value. ${USAGE}`);
+    const n = Number(value);
+    if (name in FLAGS) {
+      if (!(n > 0 && n < 10))
+        throw new Error(`${name} takes a number, like 0.85, not ${JSON.stringify(value)}`);
+      voice[FLAGS[name]] = n;
+    } else if (name === "--timing") {
+      if (value !== "on" && value !== "off")
+        throw new Error(`--timing is on or off, not ${JSON.stringify(value)}`);
+      voice.timing = value === "on";
+    } else if (name === "--body") {
+      if (!Object.hasOwn(PRESETS, value))
+        throw new Error(`--body is one of ${Object.keys(PRESETS).join(", ")}, not ${JSON.stringify(value)}`);
+      voice.body = value;
+    } else
+      throw new Error(`${name} is not a flag. ${USAGE}`);
+  }
+  return { voice, rest };
+}
+async function serve(voice) {
+  const say = await load(voice);
   for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
     if (!line.trim())
       continue;
@@ -1464,16 +1496,16 @@ async function serve() {
 `);
   }
 }
-var args = process.argv.slice(2);
 try {
+  const { voice, rest: args } = flags(process.argv.slice(2));
   if (args.length === 1 && args[0] === "--serve")
-    await serve();
+    await serve(voice);
   else {
-    if (args.length !== 2)
-      throw new Error("usage: node speak.mjs <text file> <out.wav> | node speak.mjs --serve");
+    if (args.length !== 2 || args.includes("--serve"))
+      throw new Error(USAGE);
     const [textPath, outPath] = args;
     const text = readFileSync(textPath, "utf8");
-    writeFileSync(outPath, wav((await load())(text)));
+    writeFileSync(outPath, wav((await load(voice))(text)));
   }
 } catch (e) {
   console.error(`speak: ${oneLine(e)}`);
