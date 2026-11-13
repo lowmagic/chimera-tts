@@ -1,10 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0b0f0c"/>
-  <g fill="none" stroke="#5dff9a" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
-    <!-- a head in profile, facing right, mouth open -->
-    <path d="M214 428v-58c-58-22-96-74-96-136 0-80 62-142 142-142 76 0 134 54 140 126l34 62-34 12v30c0 22-16 38-38 38h-28"/>
-    <path d="M334 300h-44" stroke="#ff8fd0"/>
-    <!-- sound -->
-    <path d="M424 250q22 26 0 52M452 226q40 50 0 100" stroke="#5db8ff" stroke-width="14"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="512" height="512" role="img" aria-label="chimera-tts"><rect width="120" height="120" rx="27" fill="#1A1918"/><path d="M30,112 C32,100 26,90 24,76 C20,50 30,22 56,18 C74,16 84,26 84,40 L86,48 L93,58 L87,62 L90,68 L85,72 L90,77 C88,84 84,90 78,92 L68,94 C66,100 66,106 68,112 Z" fill="#E8E4DA"/><path d="M86,66 C76,63 66,62 59,64 C53,66 51,72 51,80 L53,114" fill="none" stroke="#1A1918" stroke-width="5" stroke-linecap="round"/><path d="M84,73 C76,69 67,68 61,73 C57,78 58,90 61,100" fill="none" stroke="#FF73CF" stroke-width="7" stroke-linecap="round"/><path d="M4,44 H16" stroke="#E8E4DA" stroke-width="6" stroke-linecap="round"/><path d="M7,54 H15" stroke="#E8E4DA" stroke-width="6" stroke-linecap="round"/><path d="M10,64 H14" stroke="#E8E4DA" stroke-width="6" stroke-linecap="round"/><path d="M99.1,65.9 A10,10 0 0 1 99.1,80.1" fill="none" stroke="#E8E4DA" stroke-width="6" stroke-linecap="round"/><path d="M106.1,58.9 A20,20 0 0 1 106.1,87.1" fill="none" stroke="#E8E4DA" stroke-width="6" stroke-linecap="round"/></svg>

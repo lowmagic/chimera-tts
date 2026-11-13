@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "chimera-voice-chat",
+      "name": "chimera-tts",
       "dependencies": {
         "three": "0.186.1",
       },

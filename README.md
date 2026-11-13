@@ -1,14 +1,124 @@
-# chimera-voice-chat
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/chimera-tts-lockup-dark.svg">
+    <img src="docs/assets/chimera-tts-lockup-light.svg" alt="chimera-tts" width="240">
+  </picture>
+</p>
 
-Talk to an LLM that answers in the voice of the
-[Chimera Vocal Synth](https://github.com/jamesondh/chimera-vocal-synth), a physically modeled
-vocal tract running as WebAssembly in your browser.
+# chimera-tts
+
+A text-to-speech voice for AI agents, made with the
+[Chimera Vocal Synth](https://github.com/jamesondh/chimera-vocal-synth) by Jameson Hodge: a
+physically modeled vocal tract, not a neural voice. It sounds like a friendly machine learning to
+talk. [Hear a sample](https://lowmagic.github.io/chimera-tts/sample.wav), or
+[talk to it in your browser](https://lowmagic.github.io/chimera-tts/).
+
+There are two ways to use it:
+
+- **A command that turns text into a WAV file**, for [Hermes Agent](https://hermes-agent.nousresearch.com)
+  or anything else that can run a command for its speech. It needs only Node: no GPU, no network,
+  no API key. Every client that plays Hermes's speech gets the voice (its own apps, and others such
+  as Conduit).
+- **A voice chat page**: you talk, a model answers, and a wireframe head says the reply with
+  captions. It runs in the browser against any OpenAI-compatible endpoint, Hermes included.
+
+On top of Chimera this adds pitch and rhythm learned from recordings of people talking, clearer
+consonants, pronunciations for names Chimera's dictionary lacks, and Markdown made sayable.
+Chimera itself is used as it is, pinned as a submodule and not patched.
+
+Be warned that it is a characterful voice, not a clear one. A speech recognizer makes out about
+half of its words ([training/README.md](training/README.md), "Which words come out unclear"), and
+people do better with the sentence in front of them, which is why the chat page has captions.
+
+## Text to speech as a command
+
+Branch `dist` of this repository holds everything ready-built, so there is nothing to compile.
+You need a recent Node (CI runs it on Node 26; 22 works too).
+
+```sh
+git clone --depth 1 --branch dist https://github.com/lowmagic/chimera-tts /srv/chimera
+echo "Hello! This is how I sound." > reply.txt
+node /srv/chimera/speak/speak.mjs reply.txt reply.wav
+```
+
+`git -C /srv/chimera pull` updates it. The command is `speak/speak.mjs`, with everything it loads
+beside it: the engine, the pronunciation dictionary and the trained pitch model. It writes nothing
+but its output. (Built from source, the same files are in `dist/speak/`.)
+
+It reads the text (UTF-8) and writes one WAV of all of it (16-bit mono, 48 kHz), said as the chat
+page says a reply with its default settings: the same sentences, mood and emphasis marks, trained pitch and
+voice (adult male). Markdown is made sayable first (`src/reply.ts`): a link is its text, a bare URL
+is "link", a code block is "code block", a table row is its cells, emoji are dropped. If it can't,
+it prints one line to stderr and exits 1. It runs on one core at a little over a quarter of the
+audio's length: a 600-character reply (34 s of speech) takes 9 s on an Apple M4.
+
+### In Hermes Agent
+
+Hermes can then say its replies in this voice wherever it speaks: its apps' voice mode and Read
+Aloud, voice messages, and other clients that play its speech. It runs the command as a TTS
+provider, in `config.yaml`:
+
+```yaml
+tts:
+  provider: chimera
+  providers:
+    chimera:
+      type: command
+      command: node /srv/chimera/speak/speak.mjs {text_path} {output_path}
+      format: wav
+      timeout: 600 # seconds without output; a long reply on a slow machine takes a while
+```
+
+Hermes cleans the text before it hands it over (Markdown, emoji and emphasis asterisks go; a mood
+tag stays) and converts the WAV as it needs.
+
+### Changing the voice
+
+The chat page's voice sliders are flags on the command, anywhere on the line, and what you leave
+out stays at its default:
+
+| Flag | Default | The page's setting |
+| --- | --- | --- |
+| `--rate` | 0.95 | Speed |
+| `--pitch` | 1 | Pitch |
+| `--body` | male | Voice (`male`, `female`, `child`) |
+| `--plosives` | 1.5 | Harder p, t, k, b, d, g (1 to 2) |
+| `--voicing` | 1.5 | More voice in b, d, g, v, z (1 to 2) |
+| `--word-ends` | 1 | longer last syllable of each word (no slider on the page) |
+| `--timing` | on | Trained timing (`on` or `off`) |
+
+```yaml
+      command: node /srv/chimera/speak/speak.mjs --rate 0.8 --pitch 1.1 {text_path} {output_path}
+```
+
+Hermes reads the command for each reply, so a change takes effect on the next one. To find values
+you like, move the sliders in the chat page's Settings and copy them.
+
+### Kept running
+
+A speech server that says many replies keeps one running instead, so the engine, dictionary and
+pitch model load once:
+
+```sh
+node /srv/chimera/speak/speak.mjs --serve
+```
+
+reads one JSON request per line on stdin, `{"id": "1", "text": "Hello there."}`, and answers each,
+in order, with one line on stdout: `{"id": "1", "rate": 48000, "pcm": "<base64>"}`, the whole text
+as 16-bit little-endian mono PCM said as above, or `{"id": "1", "error": "<one line>"}` (a line that
+isn't a request is answered with an empty id). Nothing else goes to stdout; diagnostics go to
+stderr. It exits 0 when stdin closes. A request may carry `"options": {"rate": 0.9, "plosives": 1.5,
+"voicing": 1.5, "wordEnds": 1.3, "timing": false}` for itself; the flags above, before `--serve`, set
+what a request gets when it doesn't say. Loading takes about 0.16 s on an Apple M4, so a 10-word
+sentence takes 0.84 s served against 1.0 s as a command; the rest is the engine saying it.
+
+## The voice chat page
 
 You talk (or type), a model replies, and Chimera says the reply sentence by sentence while the
 model is still writing it. Chimera's wireframe head mouths the words, and a caption lights up each
-word as it is spoken, because the voice is charming and not always easy to understand.
+word as it is spoken.
 
-## How it works
+### How it works
 
 ```
 mic → browser speech recognition → chat model (streamed) → sentences → Chimera → speakers
@@ -35,11 +145,11 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   English: accents on content words only, a small rise before a comma, a climb at a yes/no
   question, a fall at a full stop. The model is asked to start a reply with a mood (`[excited]`)
   and to put asterisks round a word it would stress; both shape the pitch and neither is read
-  aloud. By default it is rules (`src/prosody.ts`), and it only touches pitch: timing and
-  articulation are Chimera's. The rules can be replaced by a small model trained on recordings
-  of a person reading: [training/README.md](training/README.md) has the steps (an NVIDIA GPU and
-  under an hour). If `public/models/prosody.json` exists the app uses it, with a switch in Settings.
-- **Consonants**: two sliders in Settings, both off (1.00×) to start. "Harder p, t, k, b, d, g" pushes more
+  aloud. The contour and the length of each syllable come from a small model trained on
+  recordings of people talking (`public/models/`), with switches in Settings; without it, rules
+  do the pitch (`src/prosody.ts`) and the timing is Chimera's. [training/README.md](training/README.md)
+  has the steps to train your own (an NVIDIA GPU and under an hour).
+- **Consonants**: two sliders in Settings, from 1.00× (Chimera's own) to 2.00×, at 1.50× to start. "Harder p, t, k, b, d, g" pushes more
   breath behind each stop and widens its puff; "More voice in b, d, g, v, z" keeps the voice going
   under them. They adjust Chimera's finished speech plan (`src/articulation.ts`);
   `bun tools/consonants.ts --plosives 2 --voicing 2 --wav out.wav` measures and renders a setting.
@@ -52,36 +162,7 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
 - No server. The built site is static files, installable to a phone's home screen. Every push to
   `main` is also published ready-built on branch `dist` (below).
 
-## Run it
-
-Needs Rust with the `wasm32-unknown-unknown` target, and [Bun](https://bun.sh).
-
-```sh
-git clone --recurse-submodules https://github.com/nathancurry/chimera-voice-chat
-cd chimera-voice-chat
-bun install
-bun run dev          # builds the engine, then serves http://127.0.0.1:5327
-```
-
-Open Settings, paste an API key, pick a model, then tap **Talk**.
-
-The microphone and the audio engine need a secure context: `localhost` or HTTPS.
-
-```sh
-bun run test         # unit tests (text, Markdown replies, sentences, pitch contours, the talk-over detector, Hermes's API)
-bun run build        # typecheck and build to dist/ (with the speak command in dist/speak/)
-bun run e2e          # after a build: the speak command, then headless Chromium, mocked model and recognizer
-```
-
-`bun run e2e` needs Playwright with Chromium installed; it is not a dependency of this repo.
-
-To compare the two pitch modes by ear without the page, render a reply both ways to WAV files:
-
-```sh
-bun tools/render.ts out female "[happy] Hello! This is *really* how I sound. Do you like it?"
-```
-
-## Using it
+### Using it
 
 - **Talk**: tap, speak, pause. Tap again to send early.
 - While it is thinking or speaking the button is **Stop**: tapping it cuts the voice off and
@@ -97,10 +178,10 @@ bun tools/render.ts out female "[happy] Hello! This is *really* how I sound. Do 
 - Settings has the voice (adult male, adult female, child), speed, pitch and the personality
   prompt.
 
-## Using it with Hermes Agent
+## The chat page with Hermes Agent
 
 [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) has an
-OpenAI-compatible API server, so this app can be its voice and face while Hermes keeps the memory,
+OpenAI-compatible API server, so the chat page can be its voice and face while Hermes keeps the memory,
 the tools and the conversations. In `~/.hermes/.env`:
 
 ```sh
@@ -165,76 +246,42 @@ switching between them is one tap.
   it, sending the whole conversation each turn.
 
 That key gives full access to the agent, terminal included. Never put the server on the open
-internet. Not tested against a real Hermes yet: the app's side is tested against a stand-in written
-from Hermes v0.23.1's source and documentation.
+internet. The automated tests run against a stand-in written from Hermes v0.23.1's source and
+documentation.
 
-### Hermes's own voice
+## Build it yourself
 
-Hermes can say its replies in Chimera's voice wherever it speaks (its apps' voice mode and Read
-Aloud, voice messages), not only through this page. The build has a command for that,
-`dist/speak/speak.mjs`, published on `dist` with the site, with everything it loads beside it: the
-engine, the pronunciation dictionary and the trained pitch model. It needs only Node: no network,
-no `node_modules`, nothing written but its output.
+Needs Rust with the `wasm32-unknown-unknown` target, and [Bun](https://bun.sh).
 
 ```sh
-node dist/speak/speak.mjs reply.txt reply.wav
+git clone --recurse-submodules https://github.com/lowmagic/chimera-tts
+cd chimera-tts
+bun install
+bun run dev          # builds the engine, then serves http://127.0.0.1:5327
 ```
 
-reads the text (UTF-8) and writes one WAV of all of it (16-bit mono, 48 kHz), said as this page says
-a reply with its default settings: the same sentences, mood and emphasis marks, trained pitch and
-voice (adult male). Markdown is made sayable first (`src/reply.ts`): a link is its text, a bare URL
-is "link", a code block is "code block", a table row is its cells, emoji are dropped. If it can't,
-it prints one line to stderr and exits 1. It runs on one core at a little over a quarter of the
-audio's length: a 600-character reply (34 s of speech) takes 9 s on an Apple M4.
+Open Settings, paste an API key, pick a model, then tap **Talk**.
 
-Hermes runs it as a command TTS provider, in `config.yaml`:
-
-```yaml
-tts:
-  provider: chimera
-  providers:
-    chimera:
-      type: command
-      command: node /srv/chimera/speak/speak.mjs {text_path} {output_path}
-      format: wav
-      timeout: 600 # seconds without output; a long reply on a slow machine takes a while
-```
-
-where `/srv/chimera` is a commit of `dist`. The voice is the page's with its default settings; the
-page's sliders are flags on that command, anywhere on the line, and what you leave out stays at its
-default:
-
-| Flag | Default | The page's setting |
-| --- | --- | --- |
-| `--rate` | 0.95 | Speed |
-| `--pitch` | 1 | Pitch |
-| `--body` | male | Voice (`male`, `female`, `child`) |
-| `--plosives` | 1.5 | Harder p, t, k, b, d, g (1 to 2) |
-| `--voicing` | 1.5 | More voice in b, d, g, v, z (1 to 2) |
-| `--word-ends` | 1 | longer last syllable of each word (no slider on the page) |
-| `--timing` | on | Trained timing (`on` or `off`) |
-
-```yaml
-      command: node /srv/chimera/speak/speak.mjs --rate 0.8 --pitch 1.1 {text_path} {output_path}
-```
-
-Hermes reads the command for each reply, so a change takes effect on the next one. The same flags
-before `--serve` set what a served request gets when it doesn't say otherwise. Hermes cleans the text before it hands it over
-(Markdown, emoji and emphasis asterisks go; a mood tag stays) and converts the WAV as it needs.
-
-A speech server that says many replies keeps one running instead, so the engine, dictionary and
-pitch model load once:
+The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 
 ```sh
-node dist/speak/speak.mjs --serve
+bun run test         # unit tests (text, Markdown replies, sentences, pitch contours, the talk-over detector, Hermes's API)
+bun run build        # typecheck and build to dist/ (with the speak command in dist/speak/)
+bun run e2e          # after a build: the speak command, then headless Chromium, mocked model and recognizer
+make check           # what CI runs: the tests, the build, the speak command, the training tools' tests, shellcheck
 ```
 
-reads one JSON request per line on stdin, `{"id": "1", "text": "Hello there."}`, and answers each,
-in order, with one line on stdout: `{"id": "1", "rate": 48000, "pcm": "<base64>"}`, the whole text
-as 16-bit little-endian mono PCM said as above, or `{"id": "1", "error": "<one line>"}` (a line that
-isn't a request is answered with an empty id). Nothing else goes to stdout; diagnostics go to
-stderr. It exits 0 when stdin closes. Loading takes about 0.16 s on an Apple M4, so a 10-word
-sentence takes 0.84 s served against 1.0 s as a command; the rest is the engine saying it.
+`make check` also needs the training tools' Python packages ([training/README.md](training/README.md)) and
+[uv](https://docs.astral.sh/uv/), which runs shellcheck. [AGENTS.md](AGENTS.md) says what to read before changing
+anything.
+
+`bun run e2e` needs Playwright with Chromium installed; it is not a dependency of this repo.
+
+To compare the two pitch modes by ear without the page, render a reply both ways to WAV files:
+
+```sh
+bun tools/render.ts out female "[happy] Hello! This is *really* how I sound. Do you like it?"
+```
 
 ## Updating Chimera
 
