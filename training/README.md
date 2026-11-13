@@ -191,6 +191,16 @@ the word, ends it, or is anywhere in it) and the commonest mishearings, and writ
 | `data/clarity/missed.txt` | the words never heard, commonest first |
 | `data/clarity/missed/` | their audio, to judge for yourself |
 
+To find out which voice settings help, measure the same words under several of them:
+
+```sh
+python -m clarity.sweep --out data/sweep             # 600 words × 12 settings; about 20 minutes with a GPU
+```
+
+It prints, per setting, the share heard and how many sayings it gained and lost against the
+defaults. `python -m clarity --set rate=0.85 --set wordEnds=1.3 …` measures one combination
+(`rate`, `plosives`, `voicing`, `wordEnds`, and `timing=false` for Chimera's own timing).
+
 `--words file.txt` measures your own list instead, `--top 500` is a quicker look, and
 `--whisper openai/whisper-medium.en` is a stricter and slower listener. Whisper is not a person:
 it mishears some words people would get, so read the sounds table for patterns before the word

@@ -1,4 +1,4 @@
-"""usage: python -m clarity --out data/clarity [--top 3000 | --words file.txt]
+"""usage: python -m clarity --out data/clarity [--top 3000 | --words file.txt] [--set rate=0.9 ...]
 
 Says each word in two carrier sentences with the app's voice, transcribes them with Whisper and
 writes, in --out:
@@ -39,11 +39,12 @@ def common_words(top: int, cmudict: dict[str, list[str]]) -> list[str]:
 
 
 def measure(words: list[str], cmudict: dict[str, list[str]], transcribe: Callable[[list[np.ndarray]], list[str]],
-            workers: int = 4, batch: int = 32, audio_dir: Path | None = None, progress: Callable[[str, int], None] = lambda *_: None) -> dict:
+            workers: int = 4, batch: int = 32, audio_dir: Path | None = None, progress: Callable[[str, int], None] = lambda *_: None,
+            options: dict | None = None) -> dict:
     """The report for these words (all must be in `cmudict`)."""
     jobs = [(f"{i}:{c}", carrier.format(w)) for i, w in enumerate(words) for c, carrier in enumerate(score.CARRIERS)]
     clips: dict[str, np.ndarray] = {}
-    for id_, rate, pcm in speak.say_all(jobs, workers, lambda: progress("say", len(jobs))):
+    for id_, rate, pcm in speak.say_all(jobs, workers, lambda: progress("say", len(jobs)), options):
         clips[id_] = to16k(pcm, rate)
     heard: dict[str, str] = {}
     ids = [j[0] for j in jobs]
@@ -72,6 +73,7 @@ def measure(words: list[str], cmudict: dict[str, list[str]], transcribe: Callabl
     n = sum(r["of"] for r in results.values())
     return {
         "carriers": list(score.CARRIERS),
+        "settings": options or {},
         "heard": round(100 * sum(r["heard"] for r in results.values()) / max(1, n), 1),
         # a carrier far below the others is itself being misheard: judge by the better one
         "by_carrier": [round(100 * sum(r["ok"][c] for r in results.values()) / max(1, len(results)), 1) for c in range(len(score.CARRIERS))],
@@ -91,9 +93,15 @@ def main() -> None:
     ap.add_argument("--device", help="cuda or cpu (default: cuda if there is one)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="speech commands run at once")
     ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                    help="say the words with a voice setting other than the app's default: rate, plosives, voicing, wordEnds (numbers) or timing (true/false). Repeatable")
     ap.add_argument("--no-audio", action="store_true", help="don't keep the missed words' audio")
     a = ap.parse_args()
 
+    options = {}
+    for item in a.set:
+        name, _, value = item.partition("=")
+        options[name] = value == "true" if value in ("true", "false") else float(value)
     cmudict = load_cmudict()
     if a.words:
         asked = [w.strip().lower() for w in a.words.read_text().split()]
@@ -102,7 +110,7 @@ def main() -> None:
             print(f"left out {len(set(asked)) - len(words)} words the dictionary lacks")
     else:
         words = common_words(a.top, cmudict)
-    print(f"{len(words)} words, {len(score.CARRIERS)} sentences each")
+    print(f"{len(words)} words, {len(score.CARRIERS)} sentences each" + (f", with {options}" if options else ""))
 
     from tqdm import tqdm
 
@@ -118,7 +126,7 @@ def main() -> None:
             bars[step] = tqdm(total=total, desc={"say": "speaking", "listen": "listening"}[step])
         bars[step].update()
 
-    report = measure(words, cmudict, transcribe, a.workers, a.batch, None if a.no_audio else a.out / "missed", progress)
+    report = measure(words, cmudict, transcribe, a.workers, a.batch, None if a.no_audio else a.out / "missed", progress, options)
     for b in bars.values():
         b.close()
     a.out.mkdir(parents=True, exist_ok=True)

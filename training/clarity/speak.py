@@ -15,13 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEAK = ROOT / "dist" / "speak" / "speak.mjs"
 
 
-def _serve(jobs: list[tuple[str, str]], done: Callable[[], None]) -> list[tuple[str, int, np.ndarray]]:
+def _serve(jobs: list[tuple[str, str]], done: Callable[[], None], options: dict | None = None) -> list[tuple[str, int, np.ndarray]]:
     """One speech server saying its share: (id, sample rate, samples in -1..1) each."""
     proc = subprocess.Popen(["node", str(SPEAK), "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     out = []
     try:
         for id_, text in jobs:
-            proc.stdin.write(json.dumps({"id": id_, "text": text}) + "\n")
+            proc.stdin.write(json.dumps({"id": id_, "text": text, **({"options": options} if options else {})}) + "\n")
             proc.stdin.flush()
             line = proc.stdout.readline()
             if not line:
@@ -38,11 +38,12 @@ def _serve(jobs: list[tuple[str, str]], done: Callable[[], None]) -> list[tuple[
     return out
 
 
-def say_all(jobs: list[tuple[str, str]], workers: int, done: Callable[[], None] = lambda: None) -> Iterator[tuple[str, int, np.ndarray]]:
-    """Every (id, text) said, split over `workers` speech servers; order within a server is kept."""
+def say_all(jobs: list[tuple[str, str]], workers: int, done: Callable[[], None] = lambda: None, options: dict | None = None) -> Iterator[tuple[str, int, np.ndarray]]:
+    """Every (id, text) said, split over `workers` speech servers; order within a server is kept.
+    `options` are voice settings to say them with instead of the app's defaults (tools/speak.ts)."""
     if not SPEAK.exists():
         raise SystemExit(f"{SPEAK} is missing: run `bun install && bun run build` in the repository root first")
     workers = max(1, min(workers, len(jobs)))
     with ThreadPoolExecutor(workers) as pool:
-        for part in pool.map(lambda k: _serve(jobs[k::workers], done), range(workers)):
+        for part in pool.map(lambda k: _serve(jobs[k::workers], done, options), range(workers)):
             yield from part

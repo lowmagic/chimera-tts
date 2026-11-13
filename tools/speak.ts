@@ -11,7 +11,9 @@
  *
  *   node dist/speak/speak.mjs --serve
  *
- * loads everything once, then reads one JSON request per line on stdin, `{"id": "…", "text": "…"}`,
+ * loads everything once, then reads one JSON request per line on stdin, `{"id": "…", "text": "…"}`
+ * (and optionally `"options": {"rate": 0.9, "plosives": 1.5, "voicing": 1.5, "wordEnds": 1.3, "timing": false}`
+ * to say that one request with other settings than the defaults),
  * and answers each in order with one line on stdout, `{"id": "…", "rate": 48000, "pcm": "<base64
  * of 16-bit little-endian mono PCM>"}` or `{"id": "…", "error": "<one line>"}`. Diagnostics go to
  * stderr; it exits 0 when stdin closes. `bun run build` bundles it for Node into dist/speak/
@@ -58,7 +60,16 @@ function wav(samples: Float32Array): Buffer {
 }
 
 /** Loads the engine, the dictionary and the pitch model, and returns what says a reply with them. */
-async function load(): Promise<(text: string) => Float32Array> {
+/** what a `--serve` request may set for itself, for measuring settings (training/clarity) */
+interface Overrides {
+  rate?: number;
+  plosives?: number;
+  voicing?: number;
+  timing?: boolean;
+  wordEnds?: number;
+}
+
+async function load(): Promise<(text: string, o?: Overrides) => Float32Array> {
   const asset = (name: string) => readFileSync(new URL(name, import.meta.url));
   await initChimera(asset("chimera.wasm"));
   // the facade calls into the wasm as it is imported, so only now that it has loaded
@@ -71,14 +82,14 @@ async function load(): Promise<(text: string) => Float32Array> {
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
   const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
 
-  return (text) => {
+  return (text, o = {}) => {
     const plans: Plan[] = [];
     let mood: Mood = "neutral";
     for (const sentence of replySentences(text)) {
       const s = toSayable(sentence);
       mood = s.mood ?? mood; // a tag sets the mood for the sentences after it too
       const phrases = g2p.toPhrases(s.text);
-      if (phrases.length) plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, timing: settings.trainedTiming, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
+      if (phrases.length) plans.push(planSpeech(engine, phrases, { body, rate: o.rate ?? settings.rate, f0, natural: settings.naturalPitch, model, timing: o.timing ?? settings.trainedTiming, plosives: o.plosives ?? settings.plosives, voicing: o.voicing ?? settings.voicing, wordEnds: o.wordEnds, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
 
     // the engine as the AudioWorklet runs it: its own instance, told the body, the pitch and the plans
@@ -109,6 +120,19 @@ async function load(): Promise<(text: string) => Float32Array> {
 
 const oneLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim();
 
+/** a request's "options", checked: numbers for the sliders, true or false for timing */
+function overrides(o: unknown): Overrides {
+  if (o === undefined) return {};
+  if (!o || typeof o !== "object") throw new Error('"options" is an object, like {"rate": 0.9}');
+  const out: Overrides = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (k === "timing" && typeof v === "boolean") out.timing = v;
+    else if ((k === "rate" || k === "plosives" || k === "voicing" || k === "wordEnds") && typeof v === "number" && v > 0 && v < 10) out[k] = v;
+    else throw new Error(`option ${JSON.stringify(k)}: ${JSON.stringify(v)} is not something this takes (rate, plosives, voicing, wordEnds: numbers; timing: true or false)`);
+  }
+  return out;
+}
+
 /** `--serve`: one JSON request per stdin line, one JSON answer per stdout line, in order. */
 async function serve(): Promise<void> {
   const say = await load();
@@ -120,7 +144,7 @@ async function serve(): Promise<void> {
       const req = JSON.parse(line);
       if (typeof req?.id === "string") id = req.id;
       if (typeof req?.id !== "string" || typeof req.text !== "string") throw new Error('a request is {"id": "<string>", "text": "<string>"}');
-      answer = { id, rate: FS, pcm: pcm16(say(req.text)).toString("base64") };
+      answer = { id, rate: FS, pcm: pcm16(say(req.text, overrides(req.options))).toString("base64") };
     } catch (e) {
       console.error(`speak: ${id ? `${id}: ` : ""}${oneLine(e)}`);
       answer = { id, error: oneLine(e) };
