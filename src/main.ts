@@ -299,7 +299,7 @@ function showBackend(): void {
 function fillForm(): void {
   for (const k of ["backend", "apiKey", "baseUrl", "model", "reasoning", "systemPrompt", "body"] as const) field(k).value = settings[k];
   showBackend();
-  for (const k of ["rate", "pitch"] as const) field(k).value = String(settings[k]);
+  for (const k of ["rate", "pitch", "plosives", "voicing"] as const) field(k).value = String(settings[k]);
   field<HTMLInputElement>("handsFree").checked = settings.handsFree;
   field<HTMLInputElement>("zdr").checked = settings.zdr;
   field<HTMLInputElement>("showHead").checked = settings.showHead;
@@ -326,6 +326,8 @@ function readForm(): void {
     body: field<HTMLSelectElement>("body").value as Settings["body"],
     rate: Number(field("rate").value),
     pitch: Number(field("pitch").value),
+    plosives: Number(field("plosives").value),
+    voicing: Number(field("voicing").value),
     handsFree: field<HTMLInputElement>("handsFree").checked,
     zdr: field<HTMLInputElement>("zdr").checked,
     showHead: field<HTMLInputElement>("showHead").checked,
@@ -483,7 +485,7 @@ void PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`).then((m) 
 
 /** Push the settings into the voice and the head. */
 function applySettings(): void {
-  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null };
+  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, plosives: settings.plosives, voicing: settings.voicing, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null };
   head.setBody(settings.body);
   $("open-chats").hidden = settings.backend !== "hermes";
   if (!voice.loaded) return;

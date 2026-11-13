@@ -94,6 +94,12 @@
         <label>Pitch <output data-for="pitch"></output>
           <input name="pitch" type="range" min="0.6" max="1.8" step="0.05" />
         </label>
+        <label>Harder p, t, k, b, d, g <output data-for="plosives"></output>
+          <input name="plosives" type="range" min="1" max="2" step="0.05" />
+        </label>
+        <label>More voice in b, d, g, v, z <output data-for="voicing"></output>
+          <input name="voicing" type="range" min="1" max="2" step="0.05" />
+        </label>
         <label class="row"><input name="naturalPitch" type="checkbox" /> Natural pitch <small>off is Chimera's own flat robot</small></label>
         <label class="row" id="trained-row" hidden><input name="trainedPitch" type="checkbox" /> Trained pitch model <small>learned from recordings; off uses the rules</small></label>
         <label class="row"><input name="handsFree" type="checkbox" /> Keep listening after each reply</label>
