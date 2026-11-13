@@ -34,6 +34,11 @@ if (ok.status === 0) {
   for (let i = 0; i < n; i++) sum += (wav.readInt16LE(44 + 2 * i) / 32768) ** 2;
   const secs = n / rate, rms = Math.sqrt(sum / n);
   check(secs > 1.5 && secs < 10 && rms > 0.01, `and it is speech: ${secs.toFixed(1)} s, RMS ${rms.toFixed(3)}`);
+  // the voice makes no sound of its own before the first word or after the last (an open breath
+  // gate hums a vowel there, which a listener hears as an extra word), and isn't cut off mid-sound
+  const level = (from, to) => { let e = 0; for (let i = Math.round(from * rate); i < Math.round(to * rate); i++) e += (wav.readInt16LE(44 + 2 * i) / 32768) ** 2; return Math.sqrt(e / Math.round((to - from) * rate)); };
+  const head = level(0, 0.04), tail = level(secs - 0.04, secs);
+  check(head < 0.01 * rms && tail < 0.01 * rms, `it starts and ends in silence (first 40 ms at ${(head / rms).toFixed(4)} of the speech's level, last 40 ms at ${(tail / rms).toFixed(4)})`);
 }
 
 const missing = speak(join(dir, "no-such-reply.txt"), join(dir, "missing.wav"));

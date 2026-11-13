@@ -35,6 +35,8 @@ import type { Plan } from "../vendor/chimera/src/wasm/types.ts";
 const FS = 48000;
 /** as the page schedules each sentence: this long after the last one ends */
 const LEAD = 0.03;
+/** after the last sentence: the voice takes this long to fade out, and a cut before then is a click */
+const TAIL = 0.15;
 /** gestures taken from one sentence (the AudioWorklet's limit) */
 const MAX_GESTURES = 4000;
 
@@ -85,11 +87,13 @@ async function load(): Promise<(text: string) => Float32Array> {
     x.engine_set_body(h, body.female, body.child);
     new Float64Array(x.memory.buffer, x.engine_values(h), 32).fill(NaN)[0] = f0; // the source's f0
     x.engine_set_source(h);
-    x.engine_set_gate(h, 1);
+    // the gate stays shut, as on the page: a plan brings its own breath. Open, the voice would hum
+    // a vowel before the first word, between sentences and after the last (heard as "but …", "…ed")
+    x.engine_set_gate(h, 0);
 
     // each sentence after the one before, as the page queues them; nothing sayable at all (only
     // emoji, say) is a moment of silence, still audio
-    const lengths = plans.map((p) => Math.ceil((p.end + LEAD) * FS));
+    const lengths = plans.map((p, i) => Math.ceil((p.end + LEAD + (i === plans.length - 1 ? TAIL : 0)) * FS));
     const audio = new Float32Array(lengths.reduce((a, b) => a + b, 0) || Math.round(0.25 * FS));
     let at = 0;
     plans.forEach((plan, i) => {

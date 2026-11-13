@@ -59,7 +59,7 @@ function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] }
   const body = PRESETS[bodyName], f0 = defaultF0(body);
   const voice = new WasmVoice(FS);
   voice.setSource({ f0 });
-  voice.setGate(1);
+  voice.setGate(0); // shut, as on the page: the plan brings its own breath
   const chunks: Float32Array[] = [], pitches: number[] = [];
   const stream = new SentenceStream();
   let mood: Mood = "neutral";
@@ -77,6 +77,7 @@ function render(text: string, mode: Mode): { audio: Float32Array; f0: number[] }
       if (st.voicing > 0.5) pitches.push(st.f0);
     }
   }
+  chunks.push(voice.render(Math.round(0.15 * FS))); // the voice fading out after the last sentence
   const audio = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
   let at = 0;
   for (const c of chunks) audio.set(c, at), (at += c.length);

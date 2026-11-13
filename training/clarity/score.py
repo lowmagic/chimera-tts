@@ -6,8 +6,8 @@ from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 
 # Whisper writes small numbers as digits
-DIGITS = dict(zip("0 1 2 3 4 5 6 7 8 9 10 11 12".split(),
-                  "zero one two three four five six seven eight nine ten eleven twelve".split()))
+DIGITS = dict(zip("0 1 2 3 4 5 6 7 8 9 10 11 12 100 1000".split(),
+                  "zero one two three four five six seven eight nine ten eleven twelve hundred thousand".split()))
 
 # the word goes where the {} is: once inside a sentence and once at its end, and in neither can
 # the listener guess it from the words around it
