@@ -127,6 +127,37 @@ replies, each model in turn. A lower error number does not mean it sounds more h
   out the same way (`metadata.csv` with `id|text|text`, and `wavs/`) will do; for a low male
   voice add `--pitch-floor 50 --pitch-ceiling 300`.
 
+## Which words come out unclear
+
+Not training, but it uses the same Python setup. This says the commonest English words with the
+app's own voice, has Whisper write down what it hears, and reports the words and the sounds that
+don't get through. It is how to find out what to tune, and to check that a change helped.
+
+```sh
+bun install && bun run build                         # in the repository root: builds the speech command
+cd training
+python -m clarity --out data/clarity                 # 3,000 words; about ten minutes with a GPU
+```
+
+Each word is said twice, in "Say … again." and "The word is … .", so Whisper can't guess it from
+the words around it. A word counts as heard if the transcript has it or a word that sounds the
+same ("two", "too"). Function words are left out: said in passing they are unclear in anyone's
+mouth. Whisper (`openai/whisper-small.en`, 500 MB) is fetched from Hugging Face the first time.
+
+It prints the share heard, the sounds whose words are missed most (by whether the sound starts
+the word, ends it, or is anywhere in it) and the commonest mishearings, and writes:
+
+| File | What |
+| --- | --- |
+| `data/clarity/clarity.json` | every word and what was heard; every sound's score |
+| `data/clarity/missed.txt` | the words never heard, commonest first |
+| `data/clarity/missed/` | their audio, to judge for yourself |
+
+`--words file.txt` measures your own list instead, `--top 500` is a quicker look, and
+`--whisper openai/whisper-medium.en` is a stricter and slower listener. Whisper is not a person:
+it mishears some words people would get, so read the sounds table for patterns before the word
+list. Compare two runs only with the same words and the same Whisper model.
+
 ## What is where
 
 | File | Job |
@@ -138,4 +169,5 @@ replies, each model in turn. A lower error number does not mean it sounds more h
 | `prosody/dailytalk.py` | DailyTalk → the layout `prep` reads |
 | `prosody/model.py`, `train.py` | the network and its training |
 | `prosody/export.py` | checkpoint → `public/models/prosody.{json,bin}` |
+| `clarity/` | the unclear-words measurement: `speak.py` drives the app's speech command, `listen.py` is Whisper, `score.py` the counting |
 | `prosody/fixtures.py` | regenerates `tests/fixtures/`, which hold the Python and TypeScript halves to the same answers; run it and commit if you change the features or the layers |
