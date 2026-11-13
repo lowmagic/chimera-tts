@@ -7,7 +7,12 @@
  *   node dist/speak/speak.mjs <text file> <out.wav>
  *
  * Reads the text as UTF-8 and writes one 16-bit mono WAV of all of it, then exits 0; if it can't,
- * it prints one line to stderr and exits 1. A speech server keeps it running instead:
+ * it prints one line to stderr and exits 1. The page's voice sliders are flags, anywhere on the
+ * line, for either way of running it (what isn't given is the page's default):
+ *
+ *   --rate 0.95  --pitch 1  --body male  --plosives 1.5  --voicing 1.5  --word-ends 1  --timing on
+ *
+ * A speech server keeps it running instead:
  *
  *   node dist/speak/speak.mjs --serve
  *
@@ -59,7 +64,6 @@ function wav(samples: Float32Array): Buffer {
   return Buffer.concat([head, pcm16(samples)]);
 }
 
-/** Loads the engine, the dictionary and the pitch model, and returns what says a reply with them. */
 /** what a `--serve` request may set for itself, for measuring settings (training/clarity) */
 interface Overrides {
   rate?: number;
@@ -69,7 +73,14 @@ interface Overrides {
   wordEnds?: number;
 }
 
-async function load(): Promise<(text: string, o?: Overrides) => Float32Array> {
+/** what the command line may set for every reply: a request's settings, the pitch and the body */
+interface Voice extends Overrides {
+  pitch?: number;
+  body?: keyof typeof PRESETS;
+}
+
+/** Loads the engine, the dictionary and the pitch model, and returns what says a reply with them. */
+async function load(voice: Voice = {}): Promise<(text: string, o?: Overrides) => Float32Array> {
   const asset = (name: string) => readFileSync(new URL(name, import.meta.url));
   await initChimera(asset("chimera.wasm"));
   // the facade calls into the wasm as it is imported, so only now that it has loaded
@@ -80,9 +91,10 @@ async function load(): Promise<(text: string, o?: Overrides) => Float32Array> {
   setKnownWords((w) => known.has(w));
   const settings = DEFAULTS;
   const model = settings.trainedPitch ? PitchModel.from(JSON.parse(asset("prosody.json").toString()), new Uint8Array(asset("prosody.bin")).buffer) : null;
-  const body = PRESETS[settings.body], f0 = defaultF0(body) * settings.pitch;
+  const body = PRESETS[voice.body ?? settings.body], f0 = defaultF0(body) * (voice.pitch ?? settings.pitch);
 
-  return (text, o = {}) => {
+  return (text, request = {}) => {
+    const o = { ...voice, ...request };
     const plans: Plan[] = [];
     let mood: Mood = "neutral";
     for (const sentence of replySentences(text)) {
@@ -133,9 +145,38 @@ function overrides(o: unknown): Overrides {
   return out;
 }
 
+const FLAGS = { "--rate": "rate", "--pitch": "pitch", "--plosives": "plosives", "--voicing": "voicing", "--word-ends": "wordEnds" } as const;
+const USAGE = "usage: node speak.mjs [flags] <text file> <out.wav> | node speak.mjs [flags] --serve (flags: --rate, --pitch, --plosives, --voicing, --word-ends <number>; --body <name>; --timing on|off)";
+
+/** The command line: the flags as a voice, and what is left (`--name value` or `--name=value`). */
+function flags(args: string[]): { voice: Voice; rest: string[] } {
+  const voice: Voice = {}, rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const [name, inline] = args[i].split(/=(.*)/s, 2);
+    if (!name.startsWith("--") || name === "--serve") {
+      rest.push(args[i]);
+      continue;
+    }
+    const value = inline ?? args[++i];
+    if (value === undefined) throw new Error(`${name} needs a value. ${USAGE}`);
+    const n = Number(value);
+    if (name in FLAGS) {
+      if (!(n > 0 && n < 10)) throw new Error(`${name} takes a number, like 0.85, not ${JSON.stringify(value)}`);
+      voice[FLAGS[name as keyof typeof FLAGS]] = n;
+    } else if (name === "--timing") {
+      if (value !== "on" && value !== "off") throw new Error(`--timing is on or off, not ${JSON.stringify(value)}`);
+      voice.timing = value === "on";
+    } else if (name === "--body") {
+      if (!Object.hasOwn(PRESETS, value)) throw new Error(`--body is one of ${Object.keys(PRESETS).join(", ")}, not ${JSON.stringify(value)}`);
+      voice.body = value as keyof typeof PRESETS;
+    } else throw new Error(`${name} is not a flag. ${USAGE}`);
+  }
+  return { voice, rest };
+}
+
 /** `--serve`: one JSON request per stdin line, one JSON answer per stdout line, in order. */
-async function serve(): Promise<void> {
-  const say = await load();
+async function serve(voice: Voice): Promise<void> {
+  const say = await load(voice);
   for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
     if (!line.trim()) continue;
     let id = "";
@@ -153,14 +194,14 @@ async function serve(): Promise<void> {
   }
 }
 
-const args = process.argv.slice(2);
 try {
-  if (args.length === 1 && args[0] === "--serve") await serve();
+  const { voice, rest: args } = flags(process.argv.slice(2));
+  if (args.length === 1 && args[0] === "--serve") await serve(voice);
   else {
-    if (args.length !== 2) throw new Error("usage: node speak.mjs <text file> <out.wav> | node speak.mjs --serve");
+    if (args.length !== 2 || args.includes("--serve")) throw new Error(USAGE);
     const [textPath, outPath] = args;
     const text = readFileSync(textPath, "utf8");
-    writeFileSync(outPath, wav((await load())(text)));
+    writeFileSync(outPath, wav((await load(voice))(text)));
   }
 } catch (e) {
   console.error(`speak: ${oneLine(e)}`);
