@@ -42,6 +42,8 @@ export interface Settings {
   naturalPitch: boolean;
   /** with natural pitch: take the contour from the trained model when the site has one */
   trainedPitch: boolean;
+  /** with the trained model, if it has them: its syllable lengths too, instead of Chimera's even timing */
+  trainedTiming: boolean;
   /** stop the voice when the user starts talking over it */
   bargeIn: boolean;
   /** draw the 3D head (costs a phone some CPU the voice may want) */
@@ -71,6 +73,7 @@ export const DEFAULTS: Settings = {
   handsFree: true,
   naturalPitch: true,
   trainedPitch: true,
+  trainedTiming: true,
   bargeIn: true,
   showHead: true,
 };

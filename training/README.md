@@ -6,7 +6,7 @@ gets. Chimera still makes every sound; the model only decides the melody.
 
 What it learns: for every syllable, the pitch early and late in its vowel, from the words, their
 stress, where the syllable sits in its phrase and how the phrase ends. It is pitch only: timing
-stays Chimera's. The chat model's `*emphasis*` and `[mood]` marks still work on top of it.
+stays Chimera's unless you add the step under "Timing" below. The chat model's `*emphasis*` and `[mood]` marks still work on top of it.
 
 You need Python 3.10 or later and, for the two slow steps, a GPU. Any recent NVIDIA card is far
 more than enough: the network has about 100,000 weights.
@@ -114,6 +114,44 @@ and, with more than one speaker, `speakers.json` (`{id: speaker}`). Things to kn
 
 Judge by ear, on things the assistant would say: `bun tools/render.ts out --model …` with a few
 replies, each model in turn. A lower error number does not mean it sounds more human.
+
+## Timing
+
+The model can learn rhythm as well as melody. Chimera times every sound by rule, which comes out
+even; people stretch the last word before a pause, lean on the words that matter and hurry
+through "of the". With real phoneme alignments (`--textgrids`), each syllable's length in the
+recording is compared with the length Chimera gives the same syllable, and the model learns the
+difference. In the app each syllable is then stretched or squeezed by what the model says;
+Chimera still decides how a syllable's time is shared among its sounds.
+
+It is one more step before `prep`, and one more flag:
+
+```sh
+bun tools/timing.ts /data/dailytalk-lj > training/data/dailytalk-chimera.json     # in the repository root; seconds
+cd training
+python -m prosody.prep --ljspeech /data/dailytalk-lj --textgrids /data/DailyTalk-TextGrid \
+    --timing data/dailytalk-chimera.json --out data/dailytalk.jsonl
+python -m prosody.train --data data/dailytalk.jsonl --out runs/dailytalk.pt
+python -m prosody.export --checkpoint runs/dailytalk.pt
+```
+
+Training prints, beside the pitch error, how far off the syllable lengths are in percent, next to
+"Chimera's own": the error of leaving the timing alone. The model's number should be clearly the
+smaller. Pitch is trained exactly as before, and the best epoch is still chosen by pitch.
+
+Listen before publishing: `bun tools/render.ts out --model public/models/prosody.json "…"` writes
+`trained` (the model's pitch, Chimera's timing) and `timed` (both) for each text. In the app,
+Settings gains a "Trained timing" switch when the model has lengths. The speed setting is still
+the speed: lengths are learned around each speaker's usual pace.
+
+Things to know:
+
+- A syllable is measured from its vowel's start to the next vowel's start, pauses left out.
+- Utterances that Chimera splits into a different number of syllables than the recording are
+  still used for pitch, only not for timing. `prep` says how many had lengths.
+- The app won't take a syllable below 0.55 or above 1.8 times Chimera's length, and like pitch
+  the predictions are widened by a `scale` (in `prosody.json`, under `duration`) you can edit.
+- Pauses between phrases are not learned; they stay Chimera's.
 
 ## If it sounds wrong
 

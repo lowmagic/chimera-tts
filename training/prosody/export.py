@@ -15,10 +15,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .model import PitchModel, encode
+from .model import DUR_UNIT, PitchModel, encode
 from .text import CATEGORICAL, N_NUMERIC, ROOT, Phrase, Word, featurize
 
-FORMAT = 1
+# 1: pitch only (two outputs). 2: a third output, each syllable's length, and a "duration" entry.
 # the example every export carries: the browser must compute the same numbers from the same words
 EXAMPLE = [
     Phrase([Word("well", [1]), Word("that", [1]), Word("depends", [0, 1])], "comma"),
@@ -26,7 +26,7 @@ EXAMPLE = [
 ]
 
 
-def export(model: PitchModel, words: list[str], out_dir: Path, name: str = "prosody", scale: float = 1.0, about: dict | None = None) -> Path:
+def export(model: PitchModel, words: list[str], out_dir: Path, name: str = "prosody", scale: float = 1.0, about: dict | None = None, dur_scale: float = 1.0) -> Path:
     model = model.cpu().eval()
     tensors, blobs, offset = [], [], 0
     for key, value in model.state_dict().items():
@@ -38,8 +38,9 @@ def export(model: PitchModel, words: list[str], out_dir: Path, name: str = "pros
     cat, num = encode(featurize(utt), {w: i for i, w in enumerate(words)})
     with torch.no_grad():
         y = model(cat[None], num[None])[0]
+    timed = model.config.get("n_out", 2) > 2
     meta = {
-        "format": FORMAT,
+        "format": 2 if timed else 1,
         "features": {"categorical": [n for n, _ in CATEGORICAL], "numeric": N_NUMERIC},
         "hidden": model.config["hidden"],
         "words": words,
@@ -52,6 +53,10 @@ def export(model: PitchModel, words: list[str], out_dir: Path, name: str = "pros
             "y": [[round(float(v), 5) for v in row] for row in y],
         },
     }
+    if timed:
+        # the third output times `unit` is the log of how much longer than Chimera's own a syllable
+        # is; like pitch, predictions are flatter than speech, and the app multiplies them by `scale`
+        meta["duration"] = {"unit": DUR_UNIT, "scale": round(dur_scale, 3)}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.bin").write_bytes(b"".join(blobs))
     path = out_dir / f"{name}.json"
@@ -71,9 +76,14 @@ def main(argv: list[str] | None = None) -> None:
     model.load_state_dict(ck["state"])
     m = ck["metrics"]
     scale = float(np.clip(m["true_sd"] / max(m["pred_sd"], 1e-6), 1.0, 1.8))
-    path = export(model, ck["words"], args.out, args.name, scale, {"heldOutErrorSemitones": round(m["mae"], 3), "correlation": round(m["corr"], 3), "speakerMedianHz": round(2 ** (ck["ref"] / 12), 1)})
+    about = {"heldOutErrorSemitones": round(m["mae"], 3), "correlation": round(m["corr"], 3), "speakerMedianHz": round(2 ** (ck["ref"] / 12), 1)}
+    d = m.get("dur")
+    dur_scale = float(np.clip(d["true_sd"] / max(d["pred_sd"], 1e-6), 1.0, 1.5)) if d else 1.0
+    if d:
+        about |= {"lengthErrorLog": round(d["mae"], 3), "chimeraLengthErrorLog": round(d["chimera"], 3), "lengthCorrelation": round(d["corr"], 3)}
+    path = export(model, ck["words"], args.out, args.name, scale, about, dur_scale)
     size = path.with_suffix(".bin").stat().st_size
-    print(f"wrote {path} and {path.with_suffix('.bin').name} ({size / 1024:.0f} KB), liveliness scale {scale:.2f}")
+    print(f"wrote {path} and {path.with_suffix('.bin').name} ({size / 1024:.0f} KB), liveliness scale {scale:.2f}" + (f", with timing (scale {dur_scale:.2f})" if d else ""))
     print('hear it: bun tools/render.ts out --model public/models/prosody.json "Well, that depends. Do you really want to know?"')
 
 

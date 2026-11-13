@@ -306,6 +306,7 @@ function fillForm(): void {
   field<HTMLInputElement>("bargeIn").checked = settings.bargeIn;
   field<HTMLInputElement>("naturalPitch").checked = settings.naturalPitch;
   field<HTMLInputElement>("trainedPitch").checked = settings.trainedPitch;
+  field<HTMLInputElement>("trainedTiming").checked = settings.trainedTiming;
   showRanges();
 }
 
@@ -334,6 +335,7 @@ function readForm(): void {
     bargeIn: field<HTMLInputElement>("bargeIn").checked,
     naturalPitch: field<HTMLInputElement>("naturalPitch").checked,
     trainedPitch: field<HTMLInputElement>("trainedPitch").checked,
+    trainedTiming: field<HTMLInputElement>("trainedTiming").checked,
   };
   if (chosen !== settings.backend) {
     // another backend: put this one's endpoint, key and model away and bring that one's back
@@ -480,12 +482,13 @@ void PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`).then((m) 
   if (!m) return;
   pitchModel = m;
   document.querySelector<HTMLElement>("#trained-row")!.hidden = false;
+  document.querySelector<HTMLElement>("#timing-row")!.hidden = !pitchModel.timed;
   applySettings();
 });
 
 /** Push the settings into the voice and the head. */
 function applySettings(): void {
-  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, plosives: settings.plosives, voicing: settings.voicing, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null };
+  voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, plosives: settings.plosives, voicing: settings.voicing, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null, timing: settings.trainedTiming };
   head.setBody(settings.body);
   $("open-chats").hidden = settings.backend !== "hermes";
   if (!voice.loaded) return;

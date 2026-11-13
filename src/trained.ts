@@ -71,8 +71,13 @@ export interface ModelFile {
   scale: number;
   tensors: { name: string; shape: number[]; offset: number }[];
   check: { phrases: UttPhrase[]; y: number[][] };
+  /** format 2: the third output is each syllable's length, ln(a person's / Chimera's) in `unit`s; `scale` widens it */
+  duration?: { unit: number; scale: number };
   about?: Record<string, number>;
 }
+
+/** how far a syllable's length may be taken from Chimera's own, whatever the model says */
+export const STRETCH = [0.55, 1.8];
 
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 
@@ -102,7 +107,7 @@ export class PitchModel {
 
   /** A model from its two files. Throws if it can't reproduce the example it was exported with. */
   static from(meta: ModelFile, bin: ArrayBuffer): PitchModel {
-    if (meta.format !== 1) throw new Error(`pitch model format ${meta.format} is not one this app reads`);
+    if (meta.format !== 1 && meta.format !== 2) throw new Error(`pitch model format ${meta.format} is not one this app reads`);
     const model = new PitchModel(meta, new Float32Array(bin));
     const got = model.raw(meta.check.phrases);
     const worst = Math.max(...got.flatMap((row, i) => row.map((v, j) => Math.abs(v - meta.check.y[i][j]))));
@@ -146,8 +151,13 @@ export class PitchModel {
     return out;
   }
 
-  /** Each syllable's pitch early and late in its vowel, as the network gives it. */
-  raw(utt: readonly UttPhrase[]): [number, number][] {
+  /** true if the model was trained with syllable lengths too (`timing.ts`) */
+  get timed(): boolean {
+    return !!this.meta.duration && this.get("out.bias").length > 2;
+  }
+
+  /** Each syllable's outputs as the network gives them: pitch early and late in its vowel, then (a timed model) its length. */
+  raw(utt: readonly UttPhrase[]): number[][] {
     const H = this.meta.hidden, width = this.dims.reduce((a, b) => a + b, 0);
     const xs = featurize(utt).map((f) => {
       const x = new Float32Array(width + f.num.length);
@@ -164,14 +174,20 @@ export class PitchModel {
     return xs.map((_, i) => {
       const h = new Float32Array(2 * H);
       h.set(fwd[i]), h.set(bwd[i], H);
-      const y = affine(this.get("out.weight"), this.get("out.bias"), h, 2);
-      return [y[0], y[1]];
+      return [...affine(this.get("out.weight"), this.get("out.bias"), h, this.get("out.bias").length)];
     });
   }
 
   /** The same in semitones around the speaker's usual pitch, widened to a spoken range. */
   predict(utt: readonly UttPhrase[]): [number, number][] {
     return this.raw(utt).map(([a, b]) => [a * this.scale, b * this.scale]);
+  }
+
+  /** How many times Chimera's own length each syllable should be (1 for all, if the model isn't timed). */
+  stretch(utt: readonly UttPhrase[]): number[] {
+    const d = this.meta.duration;
+    if (!d || !this.timed) return featurize(utt).map(() => 1);
+    return this.raw(utt).map((y) => Math.max(STRETCH[0], Math.min(STRETCH[1], Math.exp(y[2] * d.unit * d.scale))));
   }
 }
 
