@@ -669,6 +669,42 @@ function wordsIn(dictionary) {
   }
   return words;
 }
+
+// src/articulation.ts
+var VOICED_STOPS = new Set(["b", "d", "g", "d͡ʒ"]);
+var A = {
+  burstBreath: 2.5,
+  burstFrom: 0.08,
+  burstUntil: 0.02,
+  aspiration: 1.3,
+  aspirationLonger: 0.02,
+  larynx: -1,
+  adduction: -0.05
+};
+var amount = (v) => Math.max(0, Math.min(1, v - 1));
+function articulate(plan, a) {
+  const p = amount(a.plosives), v = amount(a.voicing);
+  if (!p && !v)
+    return plan.gestures;
+  const out = plan.gestures.map((g) => {
+    if (p && g.label === "aspiration" && g.targets.abduction !== undefined)
+      return { ...g, t1: g.t1 + A.aspirationLonger * p, targets: { abduction: g.targets.abduction * (1 + (A.aspiration - 1) * p) } };
+    if (v && g.label === "voiced frication" && g.targets.abduction !== undefined)
+      return { ...g, targets: { abduction: g.targets.abduction * (1 - v) } };
+    return g;
+  });
+  for (const s of plan.segments) {
+    if (s.kind !== "stop" && s.kind !== "affricate")
+      continue;
+    if (p)
+      out.push({ t0: s.t1 - A.burstFrom, t1: s.t1 + A.burstUntil, rampIn: 0.02, rampOut: 0.02, strength: 10, targets: { breath: 1 + (A.burstBreath - 1) * p }, label: "burst" });
+    if (v && VOICED_STOPS.has(s.ipa)) {
+      out.push({ t0: s.t0 - 0.01, t1: s.t1 - 0.01, rampIn: 0.03, rampOut: 0.02, strength: 6, targets: { larynx: A.larynx * v }, label: "voice bar" });
+      out.push({ t0: s.t0 - 0.01, t1: s.t1, rampIn: 0.02, rampOut: 0.02, strength: 6, targets: { abduction: A.adduction * v }, label: "voice bar" });
+    }
+  }
+  return out;
+}
 // shared/prosody-words.json
 var prosody_words_default = {
   _: "Shared by src/prosody.ts and training/prosody/text.py: the two must agree on these, or a trained model sees different features in the browser than it was trained on.",
@@ -1165,6 +1201,10 @@ function trainedPitch(phrases, plan, counts, model, o) {
 
 // src/plan.ts
 function planSpeech(api, phrases, o) {
+  const plan = pitched(api, phrases, o);
+  return { ...plan, gestures: articulate(plan, { plosives: o.plosives ?? 1, voicing: o.voicing ?? 1 }) };
+}
+function pitched(api, phrases, o) {
   if (!o.natural)
     return api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
   const mood = MOODS[o.mood ?? "neutral"];
@@ -1272,6 +1312,8 @@ var DEFAULTS = {
   body: "male",
   rate: 1,
   pitch: 1,
+  plosives: 1,
+  voicing: 1,
   handsFree: true,
   naturalPitch: true,
   trainedPitch: true,
@@ -1313,7 +1355,7 @@ async function load() {
       mood = s.mood ?? mood;
       const phrases = g2p.toPhrases(s.text);
       if (phrases.length)
-        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
+        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
     const x = new WebAssembly.Instance(chimeraModule(), {}).exports;
     const h = x.engine_new(FS);
