@@ -1,4 +1,4 @@
-"""usage: python -m clarity.sweep --out data/sweep [--top 600]
+"""usage: python -m clarity.sweep --out data/sweep [--top 600] [--only NAME ...]
 
 Measures the same words under several voice settings, one after another, and prints a table:
 which settings get more words across than the app's defaults. Whisper is loaded once. Each
@@ -33,6 +33,14 @@ SETTINGS: dict[str, dict] = {
     "voicing-2": {"voicing": 2.0},
     "plosives-2+voicing-2": {"plosives": 2.0, "voicing": 2.0},
     "slower-0.85+word-ends-1.3": {"rate": 0.85, "wordEnds": 1.3},
+    # second round, after the first showed speed to be what matters: finer speeds, and speed with
+    # the consonant sliders where they helped (1.5)
+    "slower-0.8": {"rate": 0.8},
+    "slower-0.7": {"rate": 0.7},
+    "slower-0.65": {"rate": 0.65},
+    "slower-0.85+consonants-1.5": {"rate": 0.85, "plosives": 1.5, "voicing": 1.5},
+    "slower-0.75+consonants-1.5": {"rate": 0.75, "plosives": 1.5, "voicing": 1.5},
+    "consonants-1.5": {"plosives": 1.5, "voicing": 1.5},
 }
 
 
