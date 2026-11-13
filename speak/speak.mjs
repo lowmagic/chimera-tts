@@ -1026,6 +1026,33 @@ function naturalPitch(phrases, plan, counts, o) {
   return [...plan.gestures.filter((g) => g.label !== "pitch"), ...pitch];
 }
 
+// src/timing.ts
+function syllableTiming(phrases, plan, counts) {
+  const lengths = [];
+  let k = 0, j = 0;
+  const segments = phrases.map((p) => p.segments.map(() => {
+    const n = counts[k++] ?? 1;
+    const a = plan.segments[j], b = plan.segments[j + n - 1];
+    j += n;
+    const dur = a && b ? b.t1 - a.t0 : 0;
+    if (a?.kind === "vowel")
+      lengths.push(0);
+    if (lengths.length)
+      lengths[lengths.length - 1] += dur;
+    return { dur, syllable: Math.max(0, lengths.length - 1) };
+  }));
+  return { segments, lengths };
+}
+function stretched(phrases, timing, stretch, rate) {
+  return phrases.map((p, pi) => ({
+    ...p,
+    segments: p.segments.map((s, si) => {
+      const t = timing.segments[pi][si];
+      return t.dur > 0 ? { ...s, dur: t.dur * rate * (stretch[t.syllable] ?? 1) } : s;
+    })
+  }));
+}
+
 // src/trained.ts
 var ENDS = ["comma", "final", "question"];
 function featurize(utt) {
@@ -1065,6 +1092,7 @@ function featurize(utt) {
   });
   return out;
 }
+var STRETCH = [0.55, 1.8];
 var sigmoid = (x) => 1 / (1 + Math.exp(-x));
 function affine(W, b, x, rows) {
   const cols = x.length, y = new Float32Array(rows);
@@ -1093,7 +1121,7 @@ class PitchModel {
     this.scale = meta.scale;
   }
   static from(meta, bin) {
-    if (meta.format !== 1)
+    if (meta.format !== 1 && meta.format !== 2)
       throw new Error(`pitch model format ${meta.format} is not one this app reads`);
     const model = new PitchModel(meta, new Float32Array(bin));
     const got = model.raw(meta.check.phrases);
@@ -1135,6 +1163,9 @@ class PitchModel {
     }
     return out;
   }
+  get timed() {
+    return !!this.meta.duration && this.get("out.bias").length > 2;
+  }
   raw(utt) {
     const H = this.meta.hidden, width = this.dims.reduce((a, b) => a + b, 0);
     const xs = featurize(utt).map((f) => {
@@ -1152,12 +1183,17 @@ class PitchModel {
     return xs.map((_, i) => {
       const h = new Float32Array(2 * H);
       h.set(fwd[i]), h.set(bwd[i], H);
-      const y = affine(this.get("out.weight"), this.get("out.bias"), h, 2);
-      return [y[0], y[1]];
+      return [...affine(this.get("out.weight"), this.get("out.bias"), h, this.get("out.bias").length)];
     });
   }
   predict(utt) {
     return this.raw(utt).map(([a, b]) => [a * this.scale, b * this.scale]);
+  }
+  stretch(utt) {
+    const d = this.meta.duration;
+    if (!d || !this.timed)
+      return featurize(utt).map(() => 1);
+    return this.raw(utt).map((y) => Math.max(STRETCH[0], Math.min(STRETCH[1], Math.exp(y[2] * d.unit * d.scale))));
   }
 }
 function utteranceOf(spans, words) {
@@ -1208,11 +1244,18 @@ function pitched(api, phrases, o) {
   if (!o.natural)
     return api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
   const mood = MOODS[o.mood ?? "neutral"];
-  const plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate * mood.rate, f0: o.f0 });
+  const rate = o.rate * mood.rate;
+  let plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
   const counts = api.plannedCounts(phrases.flatMap((p) => p.segments.map((s) => s.ipa)));
   const said = phrases.reduce((n, p) => n + p.words.length, 0);
   const emphasis = o.emphasis && (o.wordCount ?? said) === said ? o.emphasis : [];
   const pitch = { base: o.f0, emphasis, mood: o.mood };
+  if (o.model?.timed && o.timing !== false) {
+    const spans = layout(phrases, plan, counts).filter((ph) => ph.syllables.length);
+    const stretch = o.model.stretch(utteranceOf(spans, phrases.flatMap((p) => p.words)));
+    phrases = stretched(phrases, syllableTiming(phrases, plan, counts), stretch, rate);
+    plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate, f0: o.f0 });
+  }
   return { ...plan, gestures: o.model ? trainedPitch(phrases, plan, counts, o.model, pitch) : naturalPitch(phrases, plan, counts, pitch) };
 }
 
@@ -1317,6 +1360,7 @@ var DEFAULTS = {
   handsFree: true,
   naturalPitch: true,
   trainedPitch: true,
+  trainedTiming: true,
   bargeIn: true,
   showHead: true
 };
@@ -1355,7 +1399,7 @@ async function load() {
       mood = s.mood ?? mood;
       const phrases = g2p.toPhrases(s.text);
       if (phrases.length)
-        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
+        plans.push(planSpeech(engine, phrases, { body, rate: settings.rate, f0, natural: settings.naturalPitch, model, timing: settings.trainedTiming, plosives: settings.plosives, voicing: settings.voicing, emphasis: s.emphasis, wordCount: wordsOf(s.text).length, mood }));
     }
     const x = new WebAssembly.Instance(chimeraModule(), {}).exports;
     const h = x.engine_new(FS);
