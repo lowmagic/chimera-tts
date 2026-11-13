@@ -33,6 +33,9 @@ export interface VoiceSettings {
   natural: boolean;
   /** a trained pitch model to use with natural pitch (`trained.ts`), if one is loaded and wanted */
   model?: PitchModel | null;
+  /** `articulation.ts`: 1 (Chimera's own) to 2 */
+  plosives?: number;
+  voicing?: number;
 }
 
 export interface Caption {
@@ -163,7 +166,7 @@ export class Voice {
     const body = PRESETS[s.body], f0 = defaultF0(body) * s.pitch;
     const phrases = speech.g2p.toPhrases(item.text);
     if (!phrases.length) return this.next(); // nothing sayable in it (only symbols)
-    const plan = planSpeech(engine, phrases, { body, rate: s.rate, f0, natural: s.natural, model: s.model, emphasis: item.emphasis, wordCount: wordsOf(item.text).length, mood: item.mood ?? "neutral" });
+    const plan = planSpeech(engine, phrases, { body, rate: s.rate, f0, natural: s.natural, model: s.model, plosives: s.plosives, voicing: s.voicing, emphasis: item.emphasis, wordCount: wordsOf(item.text).length, mood: item.mood ?? "neutral" });
     audio.engine.setBody(body);
     // between pitch gestures the voice relaxes to its own pitch: make that this baseline
     audio.engine.setSource({ f0 });

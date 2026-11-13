@@ -39,6 +39,10 @@ mic → browser speech recognition → chat model (streamed) → sentences → C
   articulation are Chimera's. The rules can be replaced by a small model trained on recordings
   of a person reading: [training/README.md](training/README.md) has the steps (an NVIDIA GPU and
   under an hour). If `public/models/prosody.json` exists the app uses it, with a switch in Settings.
+- **Consonants**: two sliders in Settings, both off (1.00×) to start. "Harder p, t, k, b, d, g" pushes more
+  breath behind each stop and widens its puff; "More voice in b, d, g, v, z" keeps the voice going
+  under them. They adjust Chimera's finished speech plan (`src/articulation.ts`);
+  `bun tools/consonants.ts --plosives 2 --voicing 2 --wav out.wav` measures and renders a setting.
 - **Names and initials**: words the dictionary lacks would be sounded out letter by letter,
   badly ("ChatGPT" as "chat-ch-p-t"). `src/lexicon.ts` holds pronunciations for such names: add
   a line whenever the voice mangles one. Initials it doesn't know are said as letters ("GPT"), and

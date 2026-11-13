@@ -5,6 +5,7 @@
  */
 import type { BodyMix, Phrase, Plan } from "../vendor/chimera/src/wasm/types.ts";
 import { MOODS, type Mood } from "./markup.ts";
+import { articulate } from "./articulation.ts";
 import { naturalPitch } from "./prosody.ts";
 import { trainedPitch, type PitchModel } from "./trained.ts";
 
@@ -28,9 +29,17 @@ export interface SpeechOptions {
   /** how many words the emphasis indices were counted over */
   wordCount?: number;
   mood?: Mood;
+  /** harder stops and more voice under voiced consonants (`articulation.ts`): 1, Chimera's own, to 2 */
+  plosives?: number;
+  voicing?: number;
 }
 
 export function planSpeech(api: PlannerApi, phrases: Phrase[], o: SpeechOptions): Plan {
+  const plan = pitched(api, phrases, o);
+  return { ...plan, gestures: articulate(plan, { plosives: o.plosives ?? 1, voicing: o.voicing ?? 1 }) };
+}
+
+function pitched(api: PlannerApi, phrases: Phrase[], o: SpeechOptions): Plan {
   if (!o.natural) return api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
   const mood = MOODS[o.mood ?? "neutral"];
   const plan = api.planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate * mood.rate, f0: o.f0 });

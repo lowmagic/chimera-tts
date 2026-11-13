@@ -33,6 +33,9 @@ export interface Settings {
   body: BodyName;
   rate: number;
   pitch: number;
+  /** harder stops and more voice under voiced consonants: 1 (Chimera's own) to 2 */
+  plosives: number;
+  voicing: number;
   /** listen again by itself once the reply has been spoken */
   handsFree: boolean;
   /** natural pitch and the model's mood and emphasis marks, or Chimera's own flat pitch */
@@ -63,6 +66,8 @@ export const DEFAULTS: Settings = {
   body: "male",
   rate: 1,
   pitch: 1,
+  plosives: 1,
+  voicing: 1,
   handsFree: true,
   naturalPitch: true,
   trainedPitch: true,
