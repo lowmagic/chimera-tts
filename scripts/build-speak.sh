@@ -13,6 +13,6 @@ cp "$root/vendor/chimera/src/wasm/chimera.wasm" "$root/public/data/cmudict.txt.g
 
 # a sample of the voice as built, for the README's "hear a sample" link (dist/sample.wav on the site)
 sample="$(mktemp)"
-echo "[happy] Hello! I am a voice made from a model of a throat, a tongue and a pair of lips. I am still learning to talk, so thank you for listening closely." > "$sample"
+trap 'rm -f "$sample"' EXIT
+echo "[happy] Hello! I am a voice made from a model of a throat, a tongue and a pair of lips. I am still learning to talk, so thank you for listening closely." >"$sample"
 node "$out/speak.mjs" "$sample" "$root/dist/sample.wav"
-rm -f "$sample"

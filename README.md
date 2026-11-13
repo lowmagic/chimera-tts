@@ -3,8 +3,8 @@
 A text-to-speech voice for AI agents, made with the
 [Chimera Vocal Synth](https://github.com/jamesondh/chimera-vocal-synth) by Jameson Hodge: a
 physically modeled vocal tract, not a neural voice. It sounds like a friendly machine learning to
-talk. [Hear a sample](https://www.nathancurry.com/chimera-tts/sample.wav), or
-[talk to it in your browser](https://www.nathancurry.com/chimera-tts/).
+talk. [Hear a sample](https://lowmagic.github.io/chimera-tts/sample.wav), or
+[talk to it in your browser](https://lowmagic.github.io/chimera-tts/).
 
 There are two ways to use it:
 
@@ -29,7 +29,7 @@ Branch `dist` of this repository holds everything ready-built, so there is nothi
 You need a recent Node (CI runs it on Node 26; 22 works too).
 
 ```sh
-git clone --depth 1 --branch dist https://github.com/nathancurry/chimera-tts /srv/chimera
+git clone --depth 1 --branch dist https://github.com/lowmagic/chimera-tts /srv/chimera
 echo "Hello! This is how I sound." > reply.txt
 node /srv/chimera/speak/speak.mjs reply.txt reply.wav
 ```
@@ -247,7 +247,7 @@ documentation.
 Needs Rust with the `wasm32-unknown-unknown` target, and [Bun](https://bun.sh).
 
 ```sh
-git clone --recurse-submodules https://github.com/nathancurry/chimera-tts
+git clone --recurse-submodules https://github.com/lowmagic/chimera-tts
 cd chimera-tts
 bun install
 bun run dev          # builds the engine, then serves http://127.0.0.1:5327
@@ -261,7 +261,12 @@ The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 bun run test         # unit tests (text, Markdown replies, sentences, pitch contours, the talk-over detector, Hermes's API)
 bun run build        # typecheck and build to dist/ (with the speak command in dist/speak/)
 bun run e2e          # after a build: the speak command, then headless Chromium, mocked model and recognizer
+make check           # what CI runs: the tests, the build, the speak command, the training tools' tests, shellcheck
 ```
+
+`make check` also needs the training tools' Python packages ([training/README.md](training/README.md)) and
+[uv](https://docs.astral.sh/uv/), which runs shellcheck. [AGENTS.md](AGENTS.md) says what to read before changing
+anything.
 
 `bun run e2e` needs Playwright with Chromium installed; it is not a dependency of this repo.
 

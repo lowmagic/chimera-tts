@@ -1,4 +1,4 @@
-name: CI
+name: check
 on:
   pull_request:
   push:
@@ -17,13 +17,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.4
       - run: rustup target add wasm32-unknown-unknown
@@ -35,14 +35,21 @@ jobs:
             vendor/chimera/target
           key: chimera-wasm-${{ hashFiles('.gitmodules', 'vendor/chimera/Cargo.lock') }}-${{ github.sha }}
           restore-keys: chimera-wasm-${{ hashFiles('.gitmodules', 'vendor/chimera/Cargo.lock') }}-
-      - run: bun install --frozen-lockfile
-      - run: bun run test
-      - run: bun run build
-      # the speak command Hermes runs (dist/speak/), on the Node it runs on there
+      # the speak command runs on Node wherever it is installed, so it is tested on Node here
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-      - run: node tests/speak.mjs
+      # the training tools' tests run on CPU
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install numpy scipy soundfile praat-parselmouth tqdm pytest
+      - run: bun install --frozen-lockfile
+      - run: make check
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -54,30 +61,14 @@ jobs:
           path: dist
           retention-days: 1
 
-  # The pitch-training tools (training/README.md): their own tests, on CPU.
-  training:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: training
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: training/requirements.txt
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install numpy scipy soundfile praat-parselmouth tqdm pytest
-      - run: pytest -q
+  standards:
+    uses: lowmagic/.github/.github/workflows/standards-check.yml@main
 
   # Publishes main to GitHub Pages. Needs Pages turned on once: repository Settings → Pages →
-  # Source: GitHub Actions. Until then this job fails and the build above still reports.
+  # Source: GitHub Actions. Until then this job fails and the check above still reports.
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -94,10 +85,10 @@ jobs:
 
   # The built site on branch `dist`: one commit per push to main, its message naming the pushed
   # commit's full SHA, index.html at the root. A server can pin a commit of it and serve the files
-  # as they are, building nothing (the NAS does: see "Using it with Hermes Agent" in the README).
+  # as they are, building nothing (see "Text to speech as a command" in the README).
   dist:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: build
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: write
