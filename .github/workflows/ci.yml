@@ -9,10 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  # a pull request's newer push cancels its older run; every push to main runs to the end, so that
-  # each gets its build on `dist`
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  # a pull request's newer push cancels its older run. Pushes to main run one at a time, in order,
+  # and none is cancelled once started: two merges seconds apart used to build side by side, and
+  # whichever finished last was published, which could be the older one. (A push still waiting
+  # when a newer one arrives is dropped; the newer one has everything it had.)
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -115,6 +117,11 @@ jobs:
           git config user.email "41898231+github-actions[bot]@users.noreply.github.com"
           # another push's build may land first: then start again on top of it
           for attempt in 1 2 3 4 5; do
+            # main has moved on (a re-run of an old job, say): its own build is the one to publish
+            if [ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$SOURCE" ]; then
+              echo "main is no longer at $SOURCE; not publishing this build"
+              exit 0
+            fi
             if git fetch -q --depth=1 origin dist; then
               # a re-run of this job: the build is already there
               if git log -1 --format=%s FETCH_HEAD | grep -q "$SOURCE"; then exit 0; fi
