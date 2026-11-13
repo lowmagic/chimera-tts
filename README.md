@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/chimera-tts-lockup-dark.svg">
+    <img src="docs/assets/chimera-tts-lockup-light.svg" alt="chimera-tts" width="240">
+  </picture>
+</p>
+
 # chimera-tts
 
 A text-to-speech voice for AI agents, made with the
