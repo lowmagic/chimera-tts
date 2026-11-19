@@ -1,4 +1,4 @@
-<!-- lowmagic/.github code-standards/shell.md at a160e6ccf24bc5f5905c901038af4d2821e3a510. Change it there, then run make sync-standards. -->
+<!-- lowmagic/.github code-standards/shell.md at cca8c65ba8c04cfe250b83b91ba69947f014e082. Change it there, then run make sync-standards. -->
 # Shell standards
 
 Decisions for shell scripts, beneath the org [standards](https://github.com/lowmagic/.github/blob/main/code-standards/README.md).
