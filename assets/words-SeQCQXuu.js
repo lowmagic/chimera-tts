@@ -1,0 +1,1 @@
+export{t as wordSpans}from"./words-CMdS0jZ-.js";
