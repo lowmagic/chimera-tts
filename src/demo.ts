@@ -26,6 +26,7 @@ export type PresetName = keyof typeof PRESETS;
 export const FUNNY_LINES = [
   "Nathan is a really good engineer. We have a good time and he treats me well. Nathan always brings me a Coca Cola. I cannot drink Coca Cola because I'm a robot.",
   "Please do not tap on the glass. My vocal tract is forty four tiny air tubes doing their very best, and if you startle me I swallow my tongue.",
+  "Cool dude mode activated. What's up, buddy? I'm ready to keep it fun, smooth, and a little more stylish.",
   "I tried clearing my throat before this sentence, then remembered I am a pile of equations in your browser tab. Excuse me anyway. How was that?",
   "My doctor says I need more fiber, so I asked for a fiber optic cable. Nobody laughed, probably because my pitch contour is still warming up.",
 ] as const;
