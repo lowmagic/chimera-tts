@@ -19,8 +19,9 @@ There are two ways to use it:
   or anything else that can run a command for its speech. It needs only Node: no GPU, no network,
   no API key. Every client that plays Hermes's speech gets the voice (its own apps, and others such
   as Conduit).
-- **A voice chat page**: you talk, a model answers, and a wireframe head says the reply with
-  captions. It runs in the browser against any OpenAI-compatible endpoint, Hermes included.
+- **A browser demo and voice chat page**: hear the voice and its Markdown normalizer in one click
+  with no API key and no network calls, or switch to live voice chat against any OpenAI-compatible
+  endpoint, Hermes included.
 
 On top of Chimera this adds pitch and rhythm learned from recordings of people talking, clearer
 consonants, pronunciations for names Chimera's dictionary lacks, and Markdown made sayable.
@@ -112,11 +113,15 @@ stderr. It exits 0 when stdin closes. A request may carry `"options": {"rate": 0
 what a request gets when it doesn't say. Loading takes about 0.16 s on an Apple M4, so a 10-word
 sentence takes 0.84 s served against 1.0 s as a command; the rest is the engine saying it.
 
-## The voice chat page
+## The browser demo and voice chat page
 
-You talk (or type), a model replies, and Chimera says the reply sentence by sentence while the
-model is still writing it. Chimera's wireframe head mouths the words, and a caption lights up each
-word as it is spoken.
+The page opens in **Local Speak** mode: type or paste text or Markdown (or pick a preset: plain
+prose, Markdown with code, lists and URLs, a canned streamed reply, or a rotating funny line) and
+tap **Speak**. Everything runs locally in WebAssembly with no API key and no network calls, while
+Chimera's wireframe head mouths the words and a caption lights up each word as it is spoken.
+
+Switch to **Live LLM Chat** to talk (or type) to a model: Chimera says the reply sentence by
+sentence while the model is still writing it.
 
 ### How it works
 
@@ -260,7 +265,8 @@ bun install
 bun run dev          # builds the engine, then serves http://127.0.0.1:5327
 ```
 
-Open Settings, paste an API key, pick a model, then tap **Talk**.
+Tap **Speak** (or any preset) to hear it right away, or switch to **Live LLM Chat**, open Settings,
+paste an API key, pick a model, and tap **Talk**.
 
 The microphone and the audio engine need a secure context: `localhost` or HTTPS.
 

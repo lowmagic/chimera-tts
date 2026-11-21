@@ -26,7 +26,7 @@ linter.
   - The speech modules (`plan`, `prosody`, `trained`, `timing`, `articulation`, `reply`, `sentences`, `normalize`,
     `numbers`, `lexicon`) turn text into a speech plan. They don't touch the DOM, the network or storage, so they run
     the same in a browser, in Node and in Bun.
-  - The page (`main`, `voice`, `head`, `listen`, `bargein`, `llm`, `sessions`, `settings`) owns the browser. It reaches
+  - The page (`main`, `demo`, `voice`, `head`, `listen`, `bargein`, `llm`, `sessions`, `settings`) owns the browser. It reaches
     the speech modules by calling them, never the other way round.
   - `tools/speak.ts` is the command. It knows the speech modules and Chimera's wasm exports, and nothing of the page
     but the default settings.
