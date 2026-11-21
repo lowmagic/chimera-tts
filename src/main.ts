@@ -1,7 +1,9 @@
-/** The page: talk or type, the model answers, Chimera says it, the caption follows along. */
+/** The page: local text-to-speech in one click, or live voice chat against an OpenAI-compatible model. */
 import { Listener, listeningSupported } from "./listen.ts";
 import { identityNotice, isOpenRouter, listModels, streamChat, type ChatMessage, type ToolProgress } from "./llm.ts";
 import { MARKUP_PROMPT, renderReply, toSayable } from "./markup.ts";
+import { FUNNY_LINES, MOCK_TURN, PRESETS, SAMPLE, spokenText, streamChunks, type PresetName } from "./demo.ts";
+import { replySentences } from "./reply.ts";
 import { SentenceStream } from "./sentences.ts";
 import { DEFAULT_PROMPT, SUGGESTED_MODELS, loadDeploy, loadSettings, saveSettings, switchBackend, type Backend, type Settings } from "./settings.ts";
 import { HermesError, conversationName, conversationTurns, deleteConversation, hermesRoot, listConversations, openedConversation, rememberConversation, renameConversation, startConversation, when, type Conversation } from "./sessions.ts";
@@ -12,14 +14,21 @@ import { PitchModel } from "./trained.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const log = $("log"), statusEl = $("status"), captionEl = $("caption"), hint = $("hint");
-const mic = $<HTMLButtonElement>("mic"), micLabel = $("mic-label");
+const mic = $<HTMLButtonElement>("mic"), micLabel = $("mic-label"), chatFooter = $("chat-footer");
 const composer = $<HTMLFormElement>("composer"), textInput = $<HTMLInputElement>("text");
-const dialog = $<HTMLDialogElement>("settings"), form = $<HTMLFormElement>("settings-form");
+const dialog = $<HTMLDialogElement>("settings"), form = $<HTMLFormElement>("settings-form"), chatSettings = $<HTMLDetailsElement>("chat-settings");
+const demoEl = $("demo"), demoForm = $<HTMLFormElement>("demo-form"), demoText = $<HTMLTextAreaElement>("demo-text");
+const speakBtn = $<HTMLButtonElement>("speak"), stopBtn = $<HTMLButtonElement>("stop"), spokenPreview = $("spoken-preview");
+const demoStream = $("demo-stream"), demoPrompt = $("demo-prompt"), demoReply = $("demo-reply");
+const modeDemoBtn = $<HTMLButtonElement>("mode-demo"), modeChatBtn = $<HTMLButtonElement>("mode-chat");
+const presetBtns = [...document.querySelectorAll<HTMLButtonElement>(".preset")];
 
 /** how many past messages go to the model with each turn */
 const HISTORY = 24;
 
+type Mode = "demo" | "chat";
 type State = "loading" | "idle" | "listening" | "thinking" | "speaking";
+let mode: Mode = "demo";
 let state: State = "loading";
 /** the site's deploy.json, if it has one: its backend and endpoint are the defaults until the owner saves their own */
 const deploy = await loadDeploy(`${import.meta.env.BASE_URL}deploy.json`, location.href);
@@ -29,9 +38,10 @@ let history: ChatMessage[] = [];
 const voice = new Voice();
 const stage = $("stage");
 const head = new Head(stage);
-/** the reply being fetched (aborted when the user talks over it) */
+/** the reply being fetched or mock-streamed (aborted on Stop or when talked over) */
 let request: AbortController | null = null;
 let interimEl: HTMLElement | null = null;
+let hermesResumed = false;
 
 /** keeps a phone's screen on through a conversation (the browser drops it when the page is hidden) */
 let wakeLock: { release(): Promise<void> } | null = null;
@@ -57,6 +67,9 @@ function setState(s: State): void {
   mic.dataset.state = s;
   mic.disabled = s === "loading";
   micLabel.textContent = { loading: "…", idle: "Talk", listening: "Send", thinking: "Stop", speaking: "Stop" }[s];
+  speakBtn.disabled = s === "loading";
+  for (const b of presetBtns) b.disabled = s === "loading";
+  stopBtn.disabled = s !== "speaking" && s !== "thinking";
   showStatus();
 }
 
@@ -100,8 +113,8 @@ voice.onCaption = showCaption;
 voice.onSpeaking = (speaking) => {
   if (speaking) {
     if (state === "thinking" || state === "idle") setState("speaking");
-    // a spoken conversation can be interrupted by talking; a typed one doesn't open the mic
-    if (settings.bargeIn && heardBySpeech && listeningSupported) void bargeIn.arm();
+    // a spoken conversation can be interrupted by talking; a typed or demo one doesn't open the mic
+    if (mode === "chat" && settings.bargeIn && heardBySpeech && listeningSupported) void bargeIn.arm();
     return;
   }
   if (interrupting || state !== "speaking" || request) return; // cut off, or more of the reply is still arriving
@@ -120,7 +133,7 @@ function hostOf(url: string): string {
 function finishedReply(): void {
   bargeIn.disarm();
   setState("idle");
-  if (settings.handsFree && listeningSupported && heardBySpeech) startListening();
+  if (mode === "chat" && settings.handsFree && listeningSupported && heardBySpeech) startListening();
 }
 
 /** true when the last turn came in by voice (typing a turn doesn't open the mic afterwards) */
@@ -146,7 +159,7 @@ const listener = new Listener({
 
 /** the user started talking over the voice */
 const bargeIn = new BargeIn(() => {
-  if (state !== "speaking" && state !== "thinking") return;
+  if (mode !== "chat" || (state !== "speaking" && state !== "thinking")) return;
   startListening();
 });
 
@@ -170,6 +183,132 @@ function startListening(): void {
   listener.start();
 }
 
+// ---------------------------------------------------------------- local speak (landing view)
+
+function updatePreview(): void {
+  spokenPreview.textContent = spokenText(demoText.value) || "—";
+}
+
+function markPreset(chosen: string | null): void {
+  for (const btn of presetBtns) btn.setAttribute("aria-pressed", String(btn.dataset.preset === chosen));
+}
+
+async function speakMarkdown(markdown: string): Promise<void> {
+  if (state === "loading") return;
+  interrupt();
+  heardBySpeech = false;
+  await voice.unlock();
+  voice.newReply();
+  for (const s of replySentences(markdown)) voice.say(toSayable(s));
+  if (!voice.speaking) setState("idle");
+}
+
+async function playMockReply(): Promise<void> {
+  if (state === "loading") return;
+  interrupt();
+  heardBySpeech = false;
+  await voice.unlock();
+  demoPrompt.textContent = MOCK_TURN.prompt;
+  demoReply.replaceChildren();
+  demoStream.hidden = false;
+  demoText.value = "";
+  updatePreview();
+  setState("thinking");
+  const ctl = new AbortController();
+  request = ctl;
+  const sentences = new SentenceStream();
+  let reply = "";
+  const say = (parts: string[]) => parts.forEach((s) => voice.say(toSayable(s)));
+  voice.newReply();
+  for await (const delta of streamChunks(MOCK_TURN.reply, 35, ctl.signal)) {
+    if (request !== ctl) return;
+    reply += delta;
+    renderReply(demoReply, reply);
+    demoText.value = reply;
+    updatePreview();
+    say(sentences.push(delta));
+  }
+  if (request !== ctl) return;
+  say(sentences.flush());
+  request = null;
+  if (!voice.speaking) finishedReply();
+}
+
+demoText.value = SAMPLE;
+updatePreview();
+
+demoText.addEventListener("input", () => {
+  markPreset(null);
+  demoStream.hidden = true;
+  updatePreview();
+});
+demoText.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    e.preventDefault();
+    demoForm.requestSubmit();
+  }
+});
+demoForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  demoStream.hidden = true;
+  void speakMarkdown(demoText.value);
+});
+stopBtn.addEventListener("click", () => {
+  if (state === "loading") return;
+  interrupt();
+  setState("idle");
+});
+let funnyAt = 0;
+for (const btn of presetBtns) {
+  btn.addEventListener("click", () => {
+    const kind = btn.dataset.preset as PresetName | "stream" | "funny";
+    markPreset(kind);
+    if (kind === "stream") {
+      void playMockReply();
+      return;
+    }
+    const text = kind === "funny" ? FUNNY_LINES[funnyAt++ % FUNNY_LINES.length] : PRESETS[kind];
+    demoStream.hidden = true;
+    demoText.value = text;
+    updatePreview();
+    void speakMarkdown(text);
+  });
+}
+
+// ---------------------------------------------------------------- mode switch
+
+function setMode(next: Mode): void {
+  if (next === mode) return;
+  if (state === "listening") listener.cancel();
+  if (state !== "idle" && state !== "loading") {
+    interrupt();
+    setState("idle");
+  }
+  mode = next;
+  modeDemoBtn.setAttribute("aria-pressed", String(mode === "demo"));
+  modeChatBtn.setAttribute("aria-pressed", String(mode === "chat"));
+  demoEl.hidden = mode !== "demo";
+  log.hidden = mode !== "chat";
+  chatFooter.hidden = mode !== "chat";
+  $("open-chats").hidden = mode !== "chat" || settings.backend !== "hermes";
+  if (mode === "chat") {
+    if (state !== "loading" && !hint.textContent) {
+      hint.textContent = listeningSupported ? "Tap Talk, say something, and pause." : "Type a message to start.";
+    }
+    // carry on with the conversation this device last had open on this Hermes
+    if (!hermesResumed && settings.backend === "hermes" && settings.apiKey) {
+      hermesResumed = true;
+      const opened = openedConversation(settings.baseUrl);
+      if (opened && !conversation && !history.length) void openConversation(opened);
+    }
+  }
+}
+
+modeDemoBtn.addEventListener("click", () => setMode("demo"));
+modeChatBtn.addEventListener("click", () => setMode("chat"));
+
+// ---------------------------------------------------------------- live LLM chat
+
 async function send(text: string, spoken: boolean): Promise<void> {
   interrupt();
   listener.cancel();
@@ -180,6 +319,8 @@ async function send(text: string, spoken: boolean): Promise<void> {
   if (!settings.apiKey) {
     bubble("error", "Add an API key in Settings first.");
     setState("idle");
+    fillForm();
+    chatSettings.open = true;
     dialog.showModal();
     return;
   }
@@ -341,11 +482,11 @@ function readForm(): void {
     // another backend: put this one's endpoint, key and model away and bring that one's back
     settings = switchBackend(settings, chosen, deploy);
     for (const k of ["apiKey", "baseUrl", "model"] as const) field(k).value = settings[k];
-    void suggestModels();
+    if (mode === "chat" || settings.apiKey) void suggestModels();
   }
   showBackend();
   saveSettings(settings);
-  applySettings();
+  void applySettings();
 }
 
 // ---------------------------------------------------------------- conversations (Hermes Agent)
@@ -478,19 +619,12 @@ $("new-chat").addEventListener("click", () => {
 
 /** the site's trained pitch model, if it has one (public/models/prosody.json; see training/README.md) */
 let pitchModel: PitchModel | null = null;
-void PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`).then((m) => {
-  if (!m) return;
-  pitchModel = m;
-  document.querySelector<HTMLElement>("#trained-row")!.hidden = false;
-  document.querySelector<HTMLElement>("#timing-row")!.hidden = !pitchModel.timed;
-  applySettings();
-});
 
 /** Push the settings into the voice and the head. */
-function applySettings(): void {
+async function applySettings(): Promise<void> {
   voice.settings = { body: settings.body, rate: settings.rate, pitch: settings.pitch, plosives: settings.plosives, voicing: settings.voicing, natural: settings.naturalPitch, model: settings.trainedPitch ? pitchModel : null, timing: settings.trainedTiming };
   head.setBody(settings.body);
-  $("open-chats").hidden = settings.backend !== "hermes";
+  $("open-chats").hidden = mode !== "chat" || settings.backend !== "hermes";
   if (!voice.loaded) return;
   if (!settings.bargeIn) bargeIn.disarm();
   if (!settings.showHead) {
@@ -498,25 +632,31 @@ function applySettings(): void {
     stage.hidden = true;
   } else if (!head.shown) {
     stage.hidden = false;
-    void head.show().then((ok) => {
-      if (ok) return;
-      stage.hidden = true; // no WebGL here: the chat works without the head
-    });
+    const ok = await head.show();
+    if (!ok) stage.hidden = true; // no WebGL here: the page works without the head
   }
 }
+
+function setModelOptions(ids: string[]): void {
+  $("models").replaceChildren(...ids.map((id) => Object.assign(document.createElement("option"), { value: id })));
+}
+setModelOptions(SUGGESTED_MODELS);
 
 async function suggestModels(): Promise<void> {
   const ids = await listModels(field("baseUrl").value.trim() || settings.baseUrl, field("apiKey").value.trim());
   // the suggestions first (those the endpoint has, or all of them if it won't list its models)
   const first = ids.length ? SUGGESTED_MODELS.filter((id) => ids.includes(id)) : SUGGESTED_MODELS;
-  const all = [...first, ...ids.filter((id) => !first.includes(id))];
-  $("models").replaceChildren(...all.map((id) => Object.assign(document.createElement("option"), { value: id })));
+  setModelOptions([...first, ...ids.filter((id) => !first.includes(id))]);
 }
 
 $("open-settings").addEventListener("click", () => {
   fillForm();
+  chatSettings.open = mode === "chat";
   dialog.showModal();
-  void suggestModels();
+  if (mode === "chat") void suggestModels();
+});
+chatSettings.addEventListener("toggle", () => {
+  if (chatSettings.open && (mode === "chat" || settings.apiKey)) void suggestModels();
 });
 form.addEventListener("input", () => {
   showRanges();
@@ -537,21 +677,27 @@ $("test-voice").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- start
 
-applySettings();
-// carry on with the conversation this device last had open on this Hermes
-const opened = settings.backend === "hermes" && settings.apiKey ? openedConversation(settings.baseUrl) : null;
-if (opened) void openConversation(opened);
+void applySettings();
 // for the end-to-end test and for poking at it from the console
-Object.assign(window, { chimeraVoiceChat: { voice, head, state: () => state, pitch: () => voice.pitch() } });
+Object.assign(window, { chimeraVoiceChat: { voice, head, mode: () => mode, setMode, state: () => state, pitch: () => voice.pitch() } });
 
-voice
-  .load()
-  .then(() => {
+Promise.all([voice.load(), PitchModel.load(`${import.meta.env.BASE_URL}models/prosody.json`)])
+  .then(async ([, m]) => {
+    if (m) {
+      pitchModel = m;
+      $("trained-row").hidden = false;
+      $("timing-row").hidden = !m.timed;
+    }
+    updatePreview(); // the dictionary is loaded now: refresh names and initials in the preview
+    await applySettings();
     setState("idle");
-    applySettings();
-    hint.textContent = settings.apiKey ? (listeningSupported ? "Tap Talk, say something, and pause." : "Type a message to start.") : "Add your API key in Settings to start.";
+    if (mode === "chat" && !hint.textContent) {
+      hint.textContent = listeningSupported ? "Tap Talk, say something, and pause." : "Type a message to start.";
+    }
   })
   .catch((e) => {
     statusEl.textContent = "the voice failed to load";
-    bubble("error", `The Chimera engine failed to load: ${e instanceof Error ? e.message : e}`);
+    const msg = `The Chimera engine failed to load: ${e instanceof Error ? e.message : e}`;
+    if (mode === "chat") bubble("error", msg);
+    else spokenPreview.textContent = msg;
   });

@@ -11,26 +11,59 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Chimera" />
-    <title>Chimera Voice Chat</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <title>Chimera TTS</title>
+    <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <header>
-      <h1>Chimera Voice Chat</h1>
+      <h1>Chimera TTS</h1>
       <span id="status" class="status">loading the voice…</span>
       <button id="open-chats" class="ghost" aria-label="Conversations" hidden>Chats</button>
       <button id="open-settings" class="ghost" aria-label="Settings">Settings</button>
     </header>
 
+    <nav class="modes" aria-label="Mode">
+      <button type="button" id="mode-demo" class="mode" aria-pressed="true">Local Speak</button>
+      <button type="button" id="mode-chat" class="mode" aria-pressed="false">Live LLM Chat <small>(Optional · Bring Your Own OpenRouter Key)</small></button>
+    </nav>
+
     <div class="middle">
       <section id="stage" class="stage" hidden></section>
       <div class="talk">
-        <main id="log" aria-live="polite"></main>
+        <section id="demo" class="demo" aria-label="Local text to speech">
+          <div class="presets" role="group" aria-label="One-click presets">
+            <button type="button" class="preset" data-preset="prose" disabled>Plain prose</button>
+            <button type="button" class="preset" data-preset="markdown" disabled>Markdown &amp; URL</button>
+            <button type="button" class="preset" data-preset="stream" disabled>Mock LLM Reply</button>
+            <button type="button" class="preset" data-preset="funny" disabled>Funny line</button>
+          </div>
+
+          <div id="demo-stream" class="demo-stream" aria-live="polite" hidden>
+            <div id="demo-prompt" class="demo-msg user"></div>
+            <div id="demo-reply" class="demo-msg assistant"></div>
+          </div>
+
+          <form id="demo-form" class="demo-form">
+            <label for="demo-text" class="demo-label">Text or Markdown <small>spoken locally in WebAssembly — no API key, no network</small></label>
+            <textarea id="demo-text" rows="5" spellcheck="false"></textarea>
+            <div class="demo-actions">
+              <button type="submit" id="speak" class="primary" disabled>Speak</button>
+              <button type="button" id="stop" class="ghost" disabled>Stop</button>
+            </div>
+          </form>
+
+          <div class="preview">
+            <span class="preview-label">Spoken text <small>after Markdown &amp; number normalization</small></span>
+            <p id="spoken-preview" class="preview-text"></p>
+          </div>
+        </section>
+
+        <main id="log" aria-live="polite" hidden></main>
         <section id="caption" class="caption" aria-hidden="true"></section>
       </div>
     </div>
 
-    <footer>
+    <footer id="chat-footer" hidden>
       <form id="composer">
         <input id="text" type="text" autocomplete="off" placeholder="Type, or tap the mic and talk" />
         <button id="send" type="submit" class="ghost">Send</button>
@@ -54,33 +87,6 @@
     <dialog id="settings">
       <form method="dialog" id="settings-form">
         <h2>Settings</h2>
-        <label>Chat with
-          <select name="backend">
-            <option value="openrouter">OpenRouter</option>
-            <option value="hermes">Hermes Agent</option>
-            <option value="custom">Other (OpenAI-compatible)</option>
-          </select>
-          <small id="backend-hint"></small>
-        </label>
-        <label>API key <small>kept only in this browser</small>
-          <input name="apiKey" type="password" autocomplete="off" placeholder="sk-or-…" />
-        </label>
-        <label>Endpoint <small>any OpenAI-compatible API</small>
-          <input name="baseUrl" type="url" />
-        </label>
-        <label>Model
-          <input name="model" type="text" list="models" autocomplete="off" />
-          <datalist id="models"></datalist>
-        </label>
-        <label>Reasoning <small>thinking first is smarter, and slower to start speaking</small>
-          <select name="reasoning">
-            <option value="off">Off (fastest)</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </label>
-        <label class="row" id="zdr-row"><input name="zdr" type="checkbox" /> Zero data retention <small>OpenRouter: only providers that keep nothing</small></label>
         <label>Voice
           <select name="body">
             <option value="male">Adult male</option>
@@ -103,20 +109,56 @@
         <label class="row"><input name="naturalPitch" type="checkbox" /> Natural pitch <small>off is Chimera's own flat robot</small></label>
         <label class="row" id="trained-row" hidden><input name="trainedPitch" type="checkbox" /> Trained pitch model <small>learned from recordings; off uses the rules</small></label>
         <label class="row" id="timing-row" hidden><input name="trainedTiming" type="checkbox" /> Trained timing <small>the model's rhythm; off is Chimera's even one</small></label>
-        <label class="row"><input name="handsFree" type="checkbox" /> Keep listening after each reply</label>
-        <label class="row"><input name="bargeIn" type="checkbox" /> Interrupt it by talking <small>works best with headphones</small></label>
         <label class="row"><input name="showHead" type="checkbox" /> Show the head <small>turn off on a slow phone</small></label>
-        <label>Personality
-          <textarea name="systemPrompt" rows="5"></textarea>
-        </label>
+
+        <details id="chat-settings" class="chat-settings">
+          <summary>Live LLM Chat <small>Optional · Bring Your Own OpenRouter Key</small></summary>
+          <div class="chat-fields">
+            <label>Chat with
+              <select name="backend">
+                <option value="openrouter">OpenRouter</option>
+                <option value="hermes">Hermes Agent</option>
+                <option value="custom">Other (OpenAI-compatible)</option>
+              </select>
+              <small id="backend-hint"></small>
+            </label>
+            <label>API key <small>kept only in this browser</small>
+              <input name="apiKey" type="password" autocomplete="off" placeholder="sk-or-…" />
+            </label>
+            <label>Endpoint <small>any OpenAI-compatible API</small>
+              <input name="baseUrl" type="url" />
+            </label>
+            <label>Model
+              <input name="model" type="text" list="models" autocomplete="off" />
+              <datalist id="models"></datalist>
+            </label>
+            <label>Reasoning <small>thinking first is smarter, and slower to start speaking</small>
+              <select name="reasoning">
+                <option value="off">Off (fastest)</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="row" id="zdr-row"><input name="zdr" type="checkbox" /> Zero data retention <small>OpenRouter: only providers that keep nothing</small></label>
+            <label class="row"><input name="handsFree" type="checkbox" /> Keep listening after each reply</label>
+            <label class="row"><input name="bargeIn" type="checkbox" /> Interrupt it by talking <small>works best with headphones</small></label>
+            <label>Personality
+              <textarea name="systemPrompt" rows="5"></textarea>
+            </label>
+            <div class="actions">
+              <button type="button" id="reset-prompt" class="ghost">Reset personality</button>
+            </div>
+          </div>
+        </details>
+
         <div class="actions">
           <button type="button" id="test-voice" class="ghost">Test voice</button>
-          <button type="button" id="reset-prompt" class="ghost">Reset personality</button>
           <button type="submit" class="primary">Done</button>
         </div>
       </form>
     </dialog>
 
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

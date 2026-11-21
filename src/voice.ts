@@ -99,6 +99,26 @@ export class Voice {
       const c = this.current;
       if (c && m.id === c.id && c.startedAt === null) this.started(c);
     });
+    // Load the AudioWorklet module now so the first Speak tap needs no network (even offline).
+    // start() ends with ctx.resume(), which waits for a tap; analyserFast is set once addModule
+    // and the worklet node are in place.
+    if (typeof AudioContext !== "undefined") {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          clearInterval(poll);
+          off();
+          resolve();
+        };
+        const off = audio.engine.onReady(done);
+        const poll = setInterval(() => {
+          if (audio.engine.analyserFast || audio.engine.error) done();
+        }, 10);
+        audio.engine.start().then(done, done);
+      });
+    }
   }
 
   get loaded(): boolean {

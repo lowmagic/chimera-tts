@@ -1,6 +1,6 @@
 // End-to-end check of the built app in headless Chromium: `bun run build`, then `bun run e2e`.
-// The model endpoint is mocked (a streamed reply in small pieces) and the browser's speech
-// recognizer is replaced with a fake that "hears" one sentence, so no network or microphone is used.
+// First checks the default landing view with zero API keys and DevTools network offline, then the
+// optional Live LLM Chat mode with mocked OpenRouter, Hermes and microphone streams.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -36,6 +36,94 @@ const buzz = (t) => 0.5 * (0.5 + 0.5 * Math.sin(2 * Math.PI * 4 * t)) * [1, 2, 3
 const hiss = () => (Math.random() - 0.5) * 0.004;
 
 /**
+ * The default landing view: no API key, no external network calls, and once loaded it speaks the
+ * prefilled sample and all three presets with DevTools network offline. Missing API key is never
+ * mentioned until the visitor switches to Live LLM Chat and submits a message.
+ */
+async function offlineLanding(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const errors = [];
+  const external = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  page.on("request", (req) => {
+    const u = req.url();
+    if (!u.startsWith(URL) && !u.startsWith("blob:") && !u.startsWith("data:")) external.push(u);
+  });
+
+  await page.goto(URL);
+  await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  check((await page.getAttribute("#mode-demo", "aria-pressed")) === "true" && (await page.locator("#demo").isVisible()) && (await page.locator("#chat-footer").isHidden()), "the landing view opens in Local Speak mode");
+  check((await page.locator(".msg.error").count()) === 0 && !(await page.locator("#settings").evaluate((d) => d.open)), "no API key prompt or error on load");
+  check((await page.inputValue("#demo-text")).length > 20 && (await page.locator("#spoken-preview").textContent()).includes("throat"), "the text box is prefilled and shows its normalized spoken preview");
+  check(external.length === 0, `zero external network calls on load${external.length ? ": " + external.join(", ") : ""}`);
+
+  // DevTools network offline from here on: every preset and Speak/Stop must work with no network
+  await context.setOffline(true);
+
+  await page.click("#speak");
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 10000 });
+  let peak = 0;
+  for (let i = 0; i < 20; i++) {
+    peak = Math.max(peak, await page.evaluate(() => window.chimeraVoiceChat.voice.level()));
+    await page.waitForTimeout(40);
+  }
+  check(peak > 0.01, `Speak synthesizes audio with DevTools network offline (peak level ${peak.toFixed(3)})`);
+  check((await page.locator("#caption").textContent()).trim().length > 0, "the caption follows along in Local Speak mode");
+  await page.click("#stop");
+  await page.waitForTimeout(300);
+  check((await page.evaluate(() => window.chimeraVoiceChat.state())) === "idle" && (await page.evaluate(() => window.chimeraVoiceChat.voice.level())) < 0.005, "Stop silences local speech and returns to idle");
+
+  // Preset 1: Plain prose
+  await page.click('[data-preset="prose"]');
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 10000 });
+  check((await page.inputValue("#demo-text")).includes("virtual throat and tongue"), "Plain prose preset loads and speaks");
+  await page.click("#stop");
+
+  // Preset 2: Markdown with inline code, bulleted list, and URL
+  await page.click('[data-preset="markdown"]');
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 10000 });
+  const md = await page.inputValue("#demo-text");
+  const preview = await page.locator("#spoken-preview").textContent();
+  check(md.includes("`bun run test`") && md.includes("- ") && md.includes("https://github.com/lowmagic/chimera-tts") && preview.includes("twelve checks") && preview.includes("Full source at link."), "Markdown preset loads inline code, bullets and URL, shows normalized spoken text, and speaks");
+  await page.click("#stop");
+
+  // Preset 3: Mock LLM Reply streamed chunk-by-chunk into the speech pipeline
+  await page.click('[data-preset="stream"]');
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 10000 });
+  check(await page.locator("#demo-stream").isVisible(), "Mock LLM Reply streams into a chat preview and starts speaking");
+  await page.waitForFunction(() => document.getElementById("demo-reply")?.textContent?.includes("still streaming!"), null, { timeout: 10000 });
+  check((await page.locator("#demo-reply em").textContent()) === "straight" && !(await page.locator("#demo-reply").textContent()).includes("[happy]"), "Mock LLM Reply renders emphasis and strips mood tags");
+  await page.click("#stop");
+
+  // Funny canned lines preset (cycles through canned quips, starting with Nathan & Coca Cola)
+  await page.click('[data-preset="funny"]');
+  await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 10000 });
+  const firstFunny = await page.inputValue("#demo-text");
+  check(firstFunny.includes("Coca Cola") && firstFunny.includes("robot"), "Funny line preset loads the Coca Cola robot line and speaks");
+  await page.click('[data-preset="funny"]');
+  check((await page.inputValue("#demo-text")) !== firstFunny, "tapping Funny line again cycles to the next canned line");
+  await page.click("#stop");
+
+  // Settings in Local Speak mode: voice settings first, no model-list network call
+  await page.click("#open-settings");
+  check(!(await page.locator("#chat-settings").evaluate((d) => d.open)) && external.length === 0, "Settings in Local Speak mode keeps chat settings collapsed and makes no network calls");
+  await page.keyboard.press("Escape");
+
+  // Switching to Live LLM Chat still does not nag about a missing key until a message is submitted
+  await context.setOffline(false);
+  await page.click("#mode-chat");
+  check((await page.locator(".msg.error").count()) === 0 && !(await page.locator("#settings").evaluate((d) => d.open)), "switching to Live LLM Chat does not prompt or error before submitting");
+  await page.fill("#text", "hello");
+  await page.press("#text", "Enter");
+  check((await page.locator(".msg.error").count()) === 1 && (await page.locator("#settings").evaluate((d) => d.open)), "submitting in Live LLM Chat without a key explains and opens Settings");
+
+  check(errors.length === 0, `no page errors in offline landing mode${errors.length ? ": " + errors.join(" | ") : ""}`);
+  await context.close();
+}
+
+/**
  * A site that has a trained pitch model (here the tests' tiny random one): the page loads it,
  * offers the switch, and speaks with it.
  */
@@ -52,6 +140,7 @@ async function withTrainedModel(browser) {
   await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
   await page.waitForFunction(() => !document.getElementById("trained-row").hidden, null, { timeout: 5000 });
   check(await page.evaluate(() => window.chimeraVoiceChat.voice.settings.model != null), "a site with a trained pitch model loads it and uses it");
+  await page.click("#mode-chat");
   await page.evaluate(() => {
     window.pitches = [];
     setInterval(() => {
@@ -138,6 +227,7 @@ async function withHermes(browser) {
   await page.addInitScript(() => localStorage.getItem("chimera-voice-chat:settings") ?? localStorage.setItem("chimera-voice-chat:settings", JSON.stringify({ apiKey: "sk-or-key", handsFree: false, showHead: false })));
   await page.goto(URL);
   await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  await page.click("#mode-chat");
   check(await page.locator("#open-chats").isHidden(), "with OpenRouter there is no list of conversations");
   await page.click("#open-settings");
   await page.selectOption('select[name="backend"]', "hermes");
@@ -188,6 +278,7 @@ async function fromHermes(browser) {
   await page.addInitScript(() => localStorage.getItem("chimera-voice-chat:settings") ?? localStorage.setItem("chimera-voice-chat:settings", JSON.stringify({ apiKey: "hermes-key", handsFree: false, showHead: false })));
   await page.goto(URL);
   await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  await page.click("#mode-chat");
   await page.click("#open-settings");
   check((await page.inputValue('select[name="backend"]')) === "hermes" && (await page.inputValue('input[name="baseUrl"]')) === "http://127.0.0.1:5328/v1", "deploy.json makes Hermes at this site's own /v1 the default");
   check(!(await page.locator("#backend-hint").textContent()).includes("CORS"), "and Settings asks only for the key, no CORS origin");
@@ -216,7 +307,9 @@ async function fromHermes(browser) {
   await page.keyboard.press("Escape");
 
   await page.reload();
-  await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle" && document.querySelectorAll(".msg.assistant").length === 2, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+  await page.click("#mode-chat");
+  await page.waitForFunction(() => document.querySelectorAll(".msg.assistant").length === 2, null, { timeout: 30000 });
   check((await page.locator(".msg.user").allTextContents()).join(" | ") === "what should I cook tonight | how long does it take", "reopened, the app carries on with the conversation it had open");
 
   await page.click("#open-chats");
@@ -269,6 +362,7 @@ async function talkOver(talkAt) {
     });
     await page.goto(URL);
     await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
+    await page.click("#mode-chat");
     await page.click("#mic");
     await page.waitForFunction(() => window.chimeraVoiceChat.state() === "speaking", null, { timeout: 15000 });
     const t0 = Date.now();
@@ -299,6 +393,9 @@ try {
     if (i > 50) throw new Error("vite preview did not start");
     await new Promise((r) => setTimeout(r, 200));
   }
+
+  await offlineLanding(browser);
+
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -330,6 +427,7 @@ try {
   await page.goto(URL);
   await page.waitForFunction(() => window.chimeraVoiceChat?.state() === "idle", null, { timeout: 30000 });
   check(true, "engine and dictionary loaded");
+  await page.click("#mode-chat");
   // the default endpoint is OpenRouter's: the requests below go there
   check(await page.locator("#open-chats").isHidden(), "without deploy.json (as on GitHub Pages) the defaults are as before: OpenRouter, no list of conversations");
 
